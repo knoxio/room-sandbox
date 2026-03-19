@@ -13,6 +13,7 @@ pub fn run() -> Result<()> {
 
     eprintln!("This will remove:");
     eprintln!("  .room-sandbox/     (workspaces, Docker assets, state, .env)");
+    eprintln!("  Docker volumes     (room data, claude data, cargo cache)");
 
     if let Some(ref config) = config
         && docker::is_running(config)
@@ -36,8 +37,8 @@ pub fn run() -> Result<()> {
     if let Some(ref config) = config
         && docker::is_running(config)
     {
-        eprintln!("Stopping container...");
-        docker::down()?;
+        eprintln!("Stopping container and removing volumes...");
+        docker::down_with_volumes()?;
     }
 
     eprintln!("Removing .room-sandbox/...");

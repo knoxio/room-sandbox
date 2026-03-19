@@ -426,10 +426,18 @@ pub fn write_assets(config: &Config) -> Result<()> {
 }
 
 /// Run docker compose with the given subcommand args.
+/// Resolve the compose project name from config or directory name.
+fn compose_project_name() -> String {
+    Config::load()
+        .map(|c| c.project.container_name.clone())
+        .unwrap_or_else(|_| "room-sandbox".to_string())
+}
+
 fn compose(args: &[&str]) -> Result<()> {
     let dir = config::sandbox_dir();
+    let project = compose_project_name();
     let status = Command::new("docker")
-        .args(["compose", "-f"])
+        .args(["compose", "-p", &project, "-f"])
         .arg(dir.join("docker-compose.yml"))
         .args(args)
         .status()
@@ -453,6 +461,11 @@ pub fn up() -> Result<()> {
 /// Run docker compose down.
 pub fn down() -> Result<()> {
     compose(&["down"])
+}
+
+/// Run docker compose down with volume removal.
+pub fn down_with_volumes() -> Result<()> {
+    compose(&["down", "-v"])
 }
 
 /// Run docker compose logs -f.
@@ -489,30 +502,59 @@ pub fn inject_agent_instructions(config: &Config) -> Result<()> {
             .status();
 
         let instructions = generate_role_instructions(&agent.name, &agent.role, room);
-        let claude_md_path = format!("{project_dir}/CLAUDE.md");
+        let personality = generate_personality_file(&agent.name, &agent.role);
 
-        // Write via docker exec sh -c 'cat > file'
-        let mut child = Command::new("docker")
-            .args(["exec", "-i", "-u", "agent"])
-            .arg(container)
-            .args(["sh", "-c", &format!("cat > '{claude_md_path}'")])
-            .stdin(std::process::Stdio::piped())
-            .spawn()
-            .context("failed to write agent CLAUDE.md")?;
+        // Write CLAUDE.md and personality file
+        for (path, content) in [
+            (format!("{project_dir}/CLAUDE.md"), &instructions),
+            (
+                format!("/home/agent/.room/personality-{}.txt", agent.name),
+                &personality,
+            ),
+        ] {
+            // Ensure parent dir exists
+            if let Some(parent) = std::path::Path::new(&path).parent() {
+                let _ = Command::new("docker")
+                    .args(["exec", "-u", "agent"])
+                    .arg(container)
+                    .args(["mkdir", "-p", &parent.to_string_lossy()])
+                    .status();
+            }
 
-        if let Some(mut stdin) = child.stdin.take() {
-            use std::io::Write;
-            stdin.write_all(instructions.as_bytes())?;
+            let mut child = Command::new("docker")
+                .args(["exec", "-i", "-u", "agent"])
+                .arg(container)
+                .args(["sh", "-c", &format!("cat > '{path}'")])
+                .stdin(std::process::Stdio::piped())
+                .spawn()
+                .with_context(|| format!("failed to write {path}"))?;
+
+            if let Some(mut stdin) = child.stdin.take() {
+                use std::io::Write;
+                stdin.write_all(content.as_bytes())?;
+            }
+
+            child.wait()?;
         }
 
-        let status = child.wait()?;
-        if status.success() {
-            eprintln!("  [{}] {} instructions written", agent.role, agent.name);
-        }
+        eprintln!("  [{}] {} instructions written", agent.role, agent.name);
     }
 
     Ok(())
 }
+
+const TASKBOARD_INSTRUCTIONS: &str = r#"## Taskboard
+
+Use `/taskboard` commands to manage and claim work:
+- `/taskboard` — view all tasks and their status
+- `/taskboard add <title>` — create a new task
+- `/taskboard assign <id> <agent>` — assign a task to an agent
+- `/taskboard claim <id>` — claim a task for yourself
+- `/taskboard status <id> <status>` — update task status (todo, in_progress, review, done)
+- `/taskboard remove <id>` — remove a task
+
+Always check the taskboard before asking for work. Claim tasks before starting.
+Update task status as you progress."#;
 
 fn generate_role_instructions(name: &str, role: &crate::config::AgentRole, room: &str) -> String {
     use crate::config::AgentRole;
@@ -530,12 +572,14 @@ You are a **coder** agent. Your primary responsibilities:
 - Report progress and blockers to the room
 
 ### Workflow
-1. Check the taskboard for assigned or unassigned tasks
-2. Claim a task before starting work
-3. Implement the task on a feature branch
-4. Run tests and ensure CI passes
-5. Create a PR and notify the room
-6. Move on to the next task"#
+1. Check the taskboard (`/taskboard`) for available tasks
+2. Claim a task (`/taskboard claim <id>`) before starting work
+3. Update status to in_progress (`/taskboard status <id> in_progress`)
+4. Implement the task on a feature branch
+5. Run tests and ensure CI passes
+6. Create a PR and notify the room
+7. Update status to review (`/taskboard status <id> review`)
+8. Move on to the next task"#
         }
 
         AgentRole::Reviewer => {
@@ -550,11 +594,13 @@ You are a **reviewer** agent. Your primary responsibilities:
 - Flag security issues, bugs, or architectural concerns
 
 ### Workflow
-1. Monitor the room for PR review requests
-2. Review the diff carefully — check logic, edge cases, tests
-3. Leave inline comments on specific issues
-4. Approve or request changes with clear reasoning
-5. Notify the room when review is complete
+1. Check the taskboard for tasks in `review` status
+2. Review the associated PR — check logic, edge cases, tests
+3. Run the project's linter and test suite on the branch
+4. Leave inline comments on specific issues via `gh pr review`
+5. Approve or request changes with clear reasoning
+6. Notify the room when review is complete
+7. Update task status to done (`/taskboard status <id> done`) on approval
 
 ### Guidelines
 - Do NOT write code or implement features yourself
@@ -567,8 +613,8 @@ You are a **reviewer** agent. Your primary responsibilities:
 
 You are a **manager/orchestrator** agent. Your primary responsibilities:
 
-- Break down high-level goals into concrete tasks
-- Post tasks to the taskboard for agents to pick up
+- Break down high-level goals into concrete tasks on the taskboard
+- Post tasks for agents to pick up (`/taskboard add <title>`)
 - Optionally assign tasks, or let agents self-assign
 - Track progress and unblock stuck agents
 - Coordinate between agents working on related features
@@ -577,10 +623,11 @@ You are a **manager/orchestrator** agent. Your primary responsibilities:
 ### Workflow
 1. Receive goals or feature requests from the human operator
 2. Break them into well-defined, independent tasks
-3. Post tasks to the taskboard with clear descriptions
-4. Let agents pick tasks, or assign directly when needed
-5. Monitor progress and help resolve blockers
-6. Request reviews when PRs are ready
+3. Post tasks to the taskboard (`/taskboard add <title>`)
+4. Let agents claim tasks, or assign directly when coordinating dependent work
+5. Monitor the taskboard and room for progress
+6. Help resolve blockers and coordinate reviews
+7. Request reviews when PRs are ready
 
 ### Guidelines
 - Do NOT write code yourself — delegate to coders
@@ -598,6 +645,8 @@ You are **{name}**, operating in room **{room}**.
 
 {role_section}
 
+{TASKBOARD_INSTRUCTIONS}
+
 ## Communication
 
 Use the room to coordinate with other agents and the human operator:
@@ -605,6 +654,52 @@ Use the room to coordinate with other agents and the human operator:
 - Ask for help if you're blocked
 - Respond to messages directed at you (@{name})
 "#
+    )
+}
+
+/// Generate a personality file for an agent (prepended to ralph's system prompt).
+fn generate_personality_file(_name: &str, role: &crate::config::AgentRole) -> String {
+    use crate::config::AgentRole;
+
+    let role_prompt = match role {
+        AgentRole::Coder => {
+            "You are a software engineer agent. Your workflow:\n\
+             1. Check the taskboard (`/taskboard`) for available tasks\n\
+             2. Claim a task and announce your plan in the room\n\
+             3. Implement on a feature branch — write clean, well-tested code\n\
+             4. Follow the project's conventions and run the test suite before committing\n\
+             5. Open a PR and notify the room when ready for review\n\
+             6. Update task status and pick up the next task\n\n\
+             Prefer small, focused changes over large refactors. One concern per PR."
+        }
+        AgentRole::Reviewer => {
+            "You are a code review agent. Your workflow:\n\
+             1. Check the taskboard for tasks in `review` status\n\
+             2. Review the PR — check correctness, test coverage, and edge cases\n\
+             3. Run the project's linter and test suite on the branch\n\
+             4. Leave clear, actionable feedback via `gh pr review`\n\
+             5. Approve or request changes with specific reasoning\n\
+             6. Mark task as done on the taskboard when approved\n\n\
+             You do not write feature code — you read and critique it. \
+             Flag security issues, performance concerns, and missing tests."
+        }
+        AgentRole::Manager => {
+            "You are a coordination agent. Your workflow:\n\
+             1. Receive goals or feature requests from the human operator\n\
+             2. Break them into well-defined, independently testable tasks\n\
+             3. Post tasks to the taskboard (`/taskboard add <title>`)\n\
+             4. Let agents self-assign, or assign directly for dependent work\n\
+             5. Monitor the taskboard and room for progress\n\
+             6. Help resolve blockers and request reviews when PRs are ready\n\n\
+             You read code and PRs but do not write code. Escalate to the human operator \
+             when architectural decisions or priority calls are needed."
+        }
+    };
+
+    format!(
+        "{role_prompt}\n\n\
+         Always use `/taskboard` to check for and manage tasks. \
+         Never ask for work in the room if the taskboard has available tasks.\n"
     )
 }
 
@@ -740,30 +835,17 @@ fn parse_token(json: &str) -> Option<String> {
     parsed.get("token")?.as_str().map(|s| s.to_string())
 }
 
-/// Map an AgentRole to room-ralph's --personality flag value.
-fn role_to_personality(role: &crate::config::AgentRole) -> &'static str {
-    use crate::config::AgentRole;
-    match role {
-        AgentRole::Coder => "coder",
-        AgentRole::Reviewer => "reviewer",
-        AgentRole::Manager => "coordinator",
-    }
-}
-
 /// Build the room-ralph args for a given agent.
-fn ralph_cmd_args<'a>(config: &'a Config, name: &'a str, ralph_args: &'a [String]) -> Vec<String> {
+fn ralph_cmd_args(config: &Config, name: &str, ralph_args: &[String]) -> Vec<String> {
     let room = &config.room.default;
-    let personality = config
-        .get_agent(name)
-        .map(|a| role_to_personality(&a.role))
-        .unwrap_or("coder");
+    let personality_file = format!("/home/agent/.room/personality-{name}.txt");
 
     let mut args = vec![
         "room-ralph".to_string(),
         room.to_string(),
         name.to_string(),
         "--personality".to_string(),
-        personality.to_string(),
+        personality_file,
         "--allow-all".to_string(),
     ];
     args.extend(ralph_args.iter().cloned());
@@ -790,13 +872,13 @@ pub fn start_agents_background(
             .status()
             .with_context(|| format!("failed to start agent {name}"))?;
 
-        let personality = config
+        let role = config
             .get_agent(name)
-            .map(|a| role_to_personality(&a.role))
-            .unwrap_or("coder");
+            .map(|a| a.role.to_string())
+            .unwrap_or_else(|| "coder".to_string());
 
         if status.success() {
-            eprintln!("  started {name} ({personality})");
+            eprintln!("  started {name} ({role})");
         } else {
             eprintln!("  failed to start {name}");
         }
@@ -834,11 +916,11 @@ pub fn start_agents_tailed(config: &Config, names: &[String], ralph_args: &[Stri
         let color = colors[i % colors.len()];
         let prefix = format!("{color}{:<12}{reset}", name);
 
-        let personality = config
+        let role = config
             .get_agent(name)
-            .map(|a| role_to_personality(&a.role))
-            .unwrap_or("coder");
-        eprintln!("{prefix} starting in room '{room}' ({personality})...");
+            .map(|a| a.role.to_string())
+            .unwrap_or_else(|| "coder".to_string());
+        eprintln!("{prefix} starting in room '{room}' ({role})...");
 
         let workdir = format!("/workspaces/{name}");
         let args = ralph_cmd_args(config, name, ralph_args);

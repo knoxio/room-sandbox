@@ -5,6 +5,16 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+- Docker volumes now isolated per sandbox (container_name used as compose project name)
+- `clean` removes Docker volumes to prevent room history leaking between sandboxes
+
+### Added
+- Custom personality files with `/taskboard` instructions per agent role
+- Personality files passed to room-ralph via `--personality` flag
+
 ## [1.1.0] - 2026-03-20
 
 ### Changed
