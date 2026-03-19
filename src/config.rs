@@ -70,6 +70,22 @@ impl Config {
     }
 }
 
+/// Validate an agent name: must be non-empty, alphanumeric + hyphens + underscores only.
+pub fn validate_agent_name(name: &str) -> Result<()> {
+    if name.is_empty() {
+        bail!("agent name cannot be empty");
+    }
+    if !name
+        .chars()
+        .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
+    {
+        bail!(
+            "agent name '{name}' contains invalid characters — only alphanumeric, hyphens, and underscores allowed"
+        );
+    }
+    Ok(())
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RoomConfig {
     pub default: String,

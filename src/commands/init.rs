@@ -240,6 +240,10 @@ fn run_wizard(detected_repo: Option<String>) -> Result<Config> {
         .filter(|s| !s.is_empty())
         .collect();
 
+    for name in &agent_name_list {
+        config::validate_agent_name(name)?;
+    }
+
     let roles = vec!["coder", "reviewer", "manager"];
     let mut agent_defs: Vec<AgentDef> = Vec::new();
     for name in &agent_name_list {

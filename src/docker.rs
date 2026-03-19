@@ -692,13 +692,8 @@ pub fn ensure_room(config: &Config) -> Result<()> {
 }
 
 fn parse_token(json: &str) -> Option<String> {
-    // Simple extraction: {"token":"..."}
-    let start = json.find("\"token\"")?.checked_add(8)?;
-    let rest = &json[start..];
-    let start_quote = rest.find('"')?.checked_add(1)?;
-    let inner = &rest[start_quote..];
-    let end_quote = inner.find('"')?;
-    Some(inner[..end_quote].to_string())
+    let parsed: serde_json::Value = serde_json::from_str(json).ok()?;
+    parsed.get("token")?.as_str().map(|s| s.to_string())
 }
 
 /// Map an AgentRole to room-ralph's --personality flag value.
