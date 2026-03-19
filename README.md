@@ -24,12 +24,17 @@ The interactive wizard walks you through:
 - **Agents** — names and roles (coder, reviewer, manager)
 - **Auth** — GitHub account selection (supports multiple `gh` accounts), PAT, or SSH
 
+You can also run `room-sandbox init` inside an existing git repo — it auto-detects the remote URL and languages from marker files (`Cargo.toml`, `package.json`, etc.).
+
 Once initialized, start your agents:
 
 ```bash
+room-sandbox claude r2d2             # run claude interactively once to /login
 room-sandbox agent start --all       # start all agents in background
 room-sandbox tui                     # open the room TUI to observe and interact
 ```
+
+> **First run:** Agents use Claude Code under the hood. You need to authenticate once by running `room-sandbox claude <any-agent>` and typing `/login`. The auth persists across all agents via a shared Docker volume.
 
 ## Config
 
@@ -155,10 +160,17 @@ The init wizard lets you select utilities to install in the container:
 | kubectl | Kubernetes CLI |
 | yq | YAML processor |
 
+## Security
+
+- **SSH agent forwarding** — when SSH is enabled, only the agent socket is forwarded into the container. Private keys never leave the host.
+- **Agent name validation** — names are restricted to `[a-zA-Z0-9_-]` to prevent command injection.
+- **Docker socket** — only mounted if you explicitly select the `docker` utility. Be aware this grants container access to the host Docker daemon.
+
 ## Prerequisites
 
 - [Docker](https://docs.docker.com/get-docker/)
 - [GitHub CLI](https://cli.github.com/) (optional, for auth)
+- [Rust](https://rustup.rs/) (for `cargo install`)
 
 ## License
 

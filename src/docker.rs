@@ -899,52 +899,6 @@ pub fn start_agents_tailed(config: &Config, names: &[String], ralph_args: &[Stri
 }
 
 /// Seed Claude Code auth credentials from the host into the container.
-pub fn seed_claude_auth(config: &Config) {
-    let home = std::env::var("HOME").unwrap_or_else(|_| "/Users/unknown".to_string());
-    let creds_path = format!("{home}/.claude/.credentials.json");
-
-    if !std::path::Path::new(&creds_path).exists() {
-        eprintln!("  No Claude credentials found at ~/.claude/.credentials.json");
-        eprintln!("  Agents will need to authenticate — run: room-sandbox claude <agent-name>");
-        return;
-    }
-
-    let container = &config.project.container_name;
-
-    // Ensure the .claude directory exists in the container
-    let _ = Command::new("docker")
-        .args(["exec", "-u", "agent"])
-        .arg(container)
-        .args(["mkdir", "-p", "/home/agent/.claude"])
-        .status();
-
-    // Copy credentials into container
-    let dest = format!("{container}:/home/agent/.claude/.credentials.json");
-    let result = Command::new("docker")
-        .args(["cp", &creds_path, &dest])
-        .status();
-
-    match result {
-        Ok(status) if status.success() => {
-            // Fix ownership
-            let _ = Command::new("docker")
-                .args(["exec", "-u", "root"])
-                .arg(container)
-                .args([
-                    "chown",
-                    "agent:agent",
-                    "/home/agent/.claude/.credentials.json",
-                ])
-                .status();
-            eprintln!("  Copied Claude credentials from host");
-        }
-        _ => {
-            eprintln!("  Failed to copy Claude credentials");
-            eprintln!("  Run: room-sandbox claude <agent-name> to authenticate manually");
-        }
-    }
-}
-
 /// Run Claude Code interactively in an agent's workspace.
 pub fn run_claude(config: &Config, name: &str, extra_args: &[String]) -> Result<()> {
     let container = &config.project.container_name;

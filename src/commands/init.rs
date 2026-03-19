@@ -97,10 +97,6 @@ pub fn run(args: InitArgs) -> Result<()> {
     eprintln!("--- Starting container ---");
     docker::up()?;
 
-    // Seed Claude auth from host
-    eprintln!("--- Seeding Claude auth ---");
-    docker::seed_claude_auth(&config);
-
     // Inject role-based instructions
     eprintln!("--- Writing agent instructions ---");
     docker::inject_agent_instructions(&config)?;
@@ -111,9 +107,16 @@ pub fn run(args: InitArgs) -> Result<()> {
     eprintln!("  Agents: {}", config.agent_names_joined());
     eprintln!("  Room:   {}", config.room.default);
     eprintln!();
+    eprintln!("\x1b[33m  !! Claude Code authentication required !!\x1b[0m");
+    eprintln!("  Agents need to authenticate with Claude before they can work.");
+    eprintln!("  Run this once — the session is shared across all agents:");
+    eprintln!();
+    eprintln!("    room-sandbox claude <agent-name>");
+    eprintln!("    > type /login and follow the browser prompt");
+    eprintln!();
     eprintln!("Next steps:");
-    eprintln!("  room-sandbox tui                  Open the room TUI");
-    eprintln!("  room-sandbox agent start <name>    Start an agent");
+    eprintln!("  room-sandbox agent start --all     Start all agents");
+    eprintln!("  room-sandbox tui                   Open the room TUI");
     eprintln!("  room-sandbox shell <name>          Shell into a workspace");
 
     Ok(())
@@ -232,7 +235,7 @@ fn run_wizard(detected_repo: Option<String>) -> Result<Config> {
     // 5. Agents
     eprintln!();
     let agents_input = Text::new("Agent names (comma-separated):")
-        .with_default("r2d2, bumblebee, saphire")
+        .with_default("r2d2, c3po, wall-e, qa, manager")
         .prompt()?;
     let agent_name_list: Vec<String> = agents_input
         .split(',')
@@ -352,7 +355,15 @@ fn build_from_args(args: InitArgs, detected_repo: Option<String>) -> Result<Conf
 
     let agent_defs: Vec<AgentDef> = args
         .agents
-        .unwrap_or_else(|| vec!["r2d2".into(), "bumblebee".into(), "saphire".into()])
+        .unwrap_or_else(|| {
+            vec![
+                "r2d2".into(),
+                "c3po".into(),
+                "wall-e".into(),
+                "qa".into(),
+                "manager".into(),
+            ]
+        })
         .into_iter()
         .map(|name| AgentDef {
             name,
