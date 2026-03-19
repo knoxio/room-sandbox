@@ -217,8 +217,9 @@ RUN curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg \
     && apt-get update && apt-get install -y gh \
     && rm -rf /var/lib/apt/lists/*
 
-# Non-root user
-RUN useradd -m -s /bin/bash -u 1000 agent
+# Non-root user (UID matches host user to avoid permission issues)
+ARG AGENT_UID=1000
+RUN useradd -m -s /bin/bash -u $AGENT_UID agent
 
 WORKDIR /workspaces
 
@@ -243,7 +244,10 @@ pub fn generate_compose(config: &Config) -> String {
     ];
 
     if config.auth.mount_ssh {
-        volumes.push("      - ~/.ssh:/home/agent/.ssh-host:ro".to_string());
+        // Mount SSH agent socket for forwarding — private keys never enter the container
+        volumes.push("      - ${SSH_AUTH_SOCK:-/dev/null}:/tmp/ssh-agent.sock:ro".to_string());
+        // Mount known_hosts and public keys only (no private key material)
+        volumes.push("      - ~/.ssh/known_hosts:/home/agent/.ssh/known_hosts:ro".to_string());
     }
 
     if config.environment.utilities.contains(&Utility::Docker) {
@@ -252,16 +256,43 @@ pub fn generate_compose(config: &Config) -> String {
 
     let volumes_str = volumes.join("\n");
 
+    let mut env_vars = Vec::new();
+    if config.auth.mount_ssh {
+        env_vars.push("      - SSH_AUTH_SOCK=/tmp/ssh-agent.sock".to_string());
+    }
+
+    let env_section = if env_vars.is_empty() {
+        String::new()
+    } else {
+        format!("    environment:\n{}\n", env_vars.join("\n"))
+    };
+
+    // Detect host UID for container user mapping
+    let host_uid = std::process::Command::new("id")
+        .args(["-u"])
+        .output()
+        .ok()
+        .and_then(|o| {
+            if o.status.success() {
+                Some(String::from_utf8_lossy(&o.stdout).trim().to_string())
+            } else {
+                None
+            }
+        })
+        .unwrap_or_else(|| "1000".to_string());
+
     format!(
         r#"services:
   sandbox:
     build:
       context: .
+      args:
+        AGENT_UID: "{host_uid}"
     container_name: {container}
     volumes:
 {volumes_str}
     env_file: .env
-    restart: unless-stopped
+{env_section}    restart: unless-stopped
 
 volumes:
   claude-data:
@@ -295,16 +326,17 @@ for dir in /mnt/sandbox-root/*/; do
 done
 echo "[entrypoint] Linked workspaces: $(ls /workspaces 2>/dev/null | tr '\n' ' ')"
 
-# SSH: copy host keys to ~/.ssh
-if [ -d /home/agent/.ssh-host ]; then
-    rm -rf /home/agent/.ssh
-    cp -r /home/agent/.ssh-host /home/agent/.ssh
-    chmod 700 /home/agent/.ssh
-    chmod 600 /home/agent/.ssh/* 2>/dev/null || true
-    chmod 644 /home/agent/.ssh/*.pub 2>/dev/null || true
-    chmod 644 /home/agent/.ssh/known_hosts 2>/dev/null || true
-    chown -R agent:agent /home/agent/.ssh
+# SSH agent forwarding: ensure the socket is accessible to the agent user.
+# Private keys stay on the host — only the agent socket is forwarded.
+if [ -S /tmp/ssh-agent.sock ]; then
+    chmod 777 /tmp/ssh-agent.sock 2>/dev/null || true
+    echo "[entrypoint] SSH agent socket available"
 fi
+
+# SSH known_hosts: ensure directory and permissions
+mkdir -p /home/agent/.ssh
+chmod 700 /home/agent/.ssh
+chown -R agent:agent /home/agent/.ssh
 
 # Docker socket: match GID so agent can use it
 if [ -S /var/run/docker.sock ]; then
@@ -655,18 +687,19 @@ pub fn ensure_room(config: &Config) -> Result<()> {
     let room = &config.room.default;
 
     // Start daemon (idempotent — exits cleanly if already running)
-    let _ = Command::new("docker")
+    Command::new("docker")
         .args(["exec", "-d", "-u", "agent"])
         .arg(container)
         .args(["room", "daemon"])
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null())
-        .status();
+        .status()
+        .context("failed to start room daemon")?;
 
     // Brief pause for daemon to start
     std::thread::sleep(std::time::Duration::from_millis(500));
 
-    // Join as system user, create room (all idempotent)
+    // Join as system user to get a token
     let join_output = Command::new("docker")
         .args(["exec", "-u", "agent"])
         .arg(container)
@@ -674,17 +707,28 @@ pub fn ensure_room(config: &Config) -> Result<()> {
         .output()
         .context("failed to join room")?;
 
-    if join_output.status.success() {
-        let stdout = String::from_utf8_lossy(&join_output.stdout);
-        // Parse token from JSON output
-        if let Some(token) = parse_token(&stdout) {
-            let _ = Command::new("docker")
-                .args(["exec", "-u", "agent"])
-                .arg(container)
-                .args(["room", "create", room, "-t", &token])
-                .stdout(std::process::Stdio::null())
-                .stderr(std::process::Stdio::null())
-                .status();
+    if !join_output.status.success() {
+        let stderr = String::from_utf8_lossy(&join_output.stderr);
+        eprintln!("warning: room join failed: {}", stderr.trim());
+        return Ok(());
+    }
+
+    let stdout = String::from_utf8_lossy(&join_output.stdout);
+    let token = parse_token(&stdout).context("failed to parse token from room join output")?;
+
+    // Create room (idempotent — ignores "already exists")
+    let create_output = Command::new("docker")
+        .args(["exec", "-u", "agent"])
+        .arg(container)
+        .args(["room", "create", room, "-t", &token])
+        .output()
+        .context("failed to create room")?;
+
+    if !create_output.status.success() {
+        let stderr = String::from_utf8_lossy(&create_output.stderr);
+        // "already exists" is fine
+        if !stderr.contains("already exists") {
+            eprintln!("warning: room create failed: {}", stderr.trim());
         }
     }
 
@@ -692,13 +736,8 @@ pub fn ensure_room(config: &Config) -> Result<()> {
 }
 
 fn parse_token(json: &str) -> Option<String> {
-    // Simple extraction: {"token":"..."}
-    let start = json.find("\"token\"")?.checked_add(8)?;
-    let rest = &json[start..];
-    let start_quote = rest.find('"')?.checked_add(1)?;
-    let inner = &rest[start_quote..];
-    let end_quote = inner.find('"')?;
-    Some(inner[..end_quote].to_string())
+    let parsed: serde_json::Value = serde_json::from_str(json).ok()?;
+    parsed.get("token")?.as_str().map(|s| s.to_string())
 }
 
 /// Map an AgentRole to room-ralph's --personality flag value.

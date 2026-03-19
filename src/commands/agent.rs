@@ -6,6 +6,7 @@ use crate::docker;
 use crate::state;
 
 pub fn add(name: &str) -> Result<()> {
+    config::validate_agent_name(name)?;
     let mut config = Config::load()?;
 
     if config.has_agent(name) {
