@@ -3,6 +3,8 @@ name = "room-sandbox"
 version = "1.0.0"
 edition = "2024"
 description = "Dockerized multi-agent sandbox for room"
+license = "MIT"
+repository = "https://github.com/knoxio/room-sandbox"
 
 [dependencies]
 clap = { version = "4", features = ["derive"] }
