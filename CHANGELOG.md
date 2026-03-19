@@ -5,7 +5,7 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [1.1.0] - 2026-03-20
 
 ### Changed
 - Default agents: r2d2, c3po, wall-e, qa, manager
@@ -15,6 +15,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Cargo publish token handling in release workflow
 - Added license and repository fields to Cargo.toml for crates.io
 - Removed broken credential seeding (credentials file only contained MCP OAuth)
+- `apply` regenerates `.env` and clones workspaces after `clean`
+
+### Security
+- SSH agent forwarding instead of key copying (private keys never enter container)
+- Agent name validation to prevent command injection
+- Host UID detection for container user mapping
+- Proper error handling in room initialization
 
 ## [1.0.0] - 2026-03-19
 
