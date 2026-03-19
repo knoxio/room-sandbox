@@ -7,9 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- Default agents: r2d2, c3po, wall-e, qa, manager
+- Init shows clear Claude Code authentication warning with login instructions
+
 ### Fixed
 - Cargo publish token handling in release workflow
 - Added license and repository fields to Cargo.toml for crates.io
+- Removed broken credential seeding (credentials file only contained MCP OAuth)
 
 ## [1.0.0] - 2026-03-19
 
