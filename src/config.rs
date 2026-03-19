@@ -30,16 +30,12 @@ pub struct AgentDef {
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "lowercase")]
+#[derive(Default)]
 pub enum AgentRole {
+    #[default]
     Coder,
     Reviewer,
     Manager,
-}
-
-impl Default for AgentRole {
-    fn default() -> Self {
-        AgentRole::Coder
-    }
 }
 
 impl std::fmt::Display for AgentRole {

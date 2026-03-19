@@ -7,7 +7,10 @@ use anyhow::Result;
 use clap::{Parser, Subcommand};
 
 #[derive(Parser)]
-#[command(name = "room-sandbox", about = "Dockerized multi-agent sandbox for room")]
+#[command(
+    name = "room-sandbox",
+    about = "Dockerized multi-agent sandbox for room"
+)]
 struct Cli {
     #[command(subcommand)]
     command: Command,
@@ -139,13 +142,19 @@ fn main() -> Result<()> {
             AgentCommand::Add { name } => commands::agent::add(&name),
             AgentCommand::Remove { name } => commands::agent::remove(&name),
             AgentCommand::List => commands::agent::list(),
-            AgentCommand::Start { names, all, tail, ralph_args } => {
-                commands::agent::start(&names, all, tail, &ralph_args)
-            }
+            AgentCommand::Start {
+                names,
+                all,
+                tail,
+                ralph_args,
+            } => commands::agent::start(&names, all, tail, &ralph_args),
             AgentCommand::Stop { names, all } => commands::agent::stop(&names, all),
-            AgentCommand::Restart { names, all, tail, ralph_args } => {
-                commands::agent::restart(&names, all, tail, &ralph_args)
-            }
+            AgentCommand::Restart {
+                names,
+                all,
+                tail,
+                ralph_args,
+            } => commands::agent::restart(&names, all, tail, &ralph_args),
         },
         Command::Tui { username } => commands::tui::run(username.as_deref()),
         Command::Claude { name, claude_args } => commands::claude::run(&name, &claude_args),

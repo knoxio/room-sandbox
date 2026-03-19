@@ -19,16 +19,16 @@ pub fn run(name: Option<&str>, root: bool) -> Result<()> {
         }
         if !config::agent_workspace(agent_name).exists() {
             if drift.agent_missing(agent_name) {
-                bail!("agent '{agent_name}' was added but not yet cloned — run `room-sandbox apply`");
+                bail!(
+                    "agent '{agent_name}' was added but not yet cloned — run `room-sandbox apply`"
+                );
             }
             bail!("agent '{agent_name}' workspace not found");
         }
     }
 
     if !drift.is_empty() {
-        eprintln!(
-            "warning: sandbox.toml has unapplied changes — run `room-sandbox apply`"
-        );
+        eprintln!("warning: sandbox.toml has unapplied changes — run `room-sandbox apply`");
     }
 
     // Ensure container is running

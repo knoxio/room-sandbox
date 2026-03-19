@@ -185,7 +185,11 @@ pub fn restart(names: &[String], all: bool, tail: bool, ralph_args: &[String]) -
 /// Resolve agent names: use --all to select all agents, or validate provided names.
 fn resolve_names(config: &Config, names: &[String], all: bool) -> Result<Vec<String>> {
     if all {
-        return Ok(config.agent_names().into_iter().map(|s| s.to_string()).collect());
+        return Ok(config
+            .agent_names()
+            .into_iter()
+            .map(|s| s.to_string())
+            .collect());
     }
     if names.is_empty() {
         bail!("provide at least one agent name, or use --all");

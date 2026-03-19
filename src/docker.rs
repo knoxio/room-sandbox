@@ -445,7 +445,8 @@ pub fn inject_agent_instructions(config: &Config) -> Result<()> {
 
     for agent in &config.agents {
         let project_dir = format!(
-            "/home/agent/.claude/projects/-mnt-sandbox-root-{}", agent.name
+            "/home/agent/.claude/projects/-mnt-sandbox-root-{}",
+            agent.name
         );
 
         // Ensure directory exists
@@ -485,7 +486,8 @@ fn generate_role_instructions(name: &str, role: &crate::config::AgentRole, room:
     use crate::config::AgentRole;
 
     let role_section = match role {
-        AgentRole::Coder => r#"## Role: Coder
+        AgentRole::Coder => {
+            r#"## Role: Coder
 
 You are a **coder** agent. Your primary responsibilities:
 
@@ -501,9 +503,11 @@ You are a **coder** agent. Your primary responsibilities:
 3. Implement the task on a feature branch
 4. Run tests and ensure CI passes
 5. Create a PR and notify the room
-6. Move on to the next task"#,
+6. Move on to the next task"#
+        }
 
-        AgentRole::Reviewer => r#"## Role: Reviewer
+        AgentRole::Reviewer => {
+            r#"## Role: Reviewer
 
 You are a **reviewer** agent. Your primary responsibilities:
 
@@ -523,9 +527,11 @@ You are a **reviewer** agent. Your primary responsibilities:
 ### Guidelines
 - Do NOT write code or implement features yourself
 - Focus on catching bugs, not style preferences
-- If a PR is good, approve it quickly — don't block unnecessarily"#,
+- If a PR is good, approve it quickly — don't block unnecessarily"#
+        }
 
-        AgentRole::Manager => r#"## Role: Manager
+        AgentRole::Manager => {
+            r#"## Role: Manager
 
 You are a **manager/orchestrator** agent. Your primary responsibilities:
 
@@ -549,7 +555,8 @@ You are a **manager/orchestrator** agent. Your primary responsibilities:
 - Keep tasks small and independently testable
 - Ensure agents aren't working on conflicting changes
 - Prefer letting agents self-assign — only assign directly when coordinating dependent work
-- Escalate to the human operator when decisions are needed"#,
+- Escalate to the human operator when decisions are needed"#
+        }
     };
 
     format!(
@@ -705,11 +712,7 @@ fn role_to_personality(role: &crate::config::AgentRole) -> &'static str {
 }
 
 /// Build the room-ralph args for a given agent.
-fn ralph_cmd_args<'a>(
-    config: &'a Config,
-    name: &'a str,
-    ralph_args: &'a [String],
-) -> Vec<String> {
+fn ralph_cmd_args<'a>(config: &'a Config, name: &'a str, ralph_args: &'a [String]) -> Vec<String> {
     let room = &config.room.default;
     let personality = config
         .get_agent(name)
@@ -764,11 +767,7 @@ pub fn start_agents_background(
 }
 
 /// Start agents and tail their multiplexed output with colored prefixes.
-pub fn start_agents_tailed(
-    config: &Config,
-    names: &[String],
-    ralph_args: &[String],
-) -> Result<()> {
+pub fn start_agents_tailed(config: &Config, names: &[String], ralph_args: &[String]) -> Result<()> {
     use std::io::{BufRead, BufReader};
     use std::sync::mpsc;
     use std::thread;
@@ -813,7 +812,8 @@ pub fn start_agents_tailed(
             .stdout(std::process::Stdio::piped())
             .stderr(std::process::Stdio::piped());
 
-        let mut child = cmd.spawn()
+        let mut child = cmd
+            .spawn()
             .with_context(|| format!("failed to start agent {name}"))?;
 
         // Spawn thread for stdout
@@ -822,10 +822,8 @@ pub fn start_agents_tailed(
             let prefix = prefix.clone();
             thread::spawn(move || {
                 let reader = BufReader::new(stdout);
-                for line in reader.lines() {
-                    if let Ok(line) = line {
-                        let _ = tx.send((prefix.clone(), line));
-                    }
+                for line in reader.lines().map_while(Result::ok) {
+                    let _ = tx.send((prefix.clone(), line));
                 }
             });
         }
@@ -836,10 +834,8 @@ pub fn start_agents_tailed(
             let prefix = prefix.clone();
             thread::spawn(move || {
                 let reader = BufReader::new(stderr);
-                for line in reader.lines() {
-                    if let Ok(line) = line {
-                        let _ = tx.send((prefix.clone(), line));
-                    }
+                for line in reader.lines().map_while(Result::ok) {
+                    let _ = tx.send((prefix.clone(), line));
                 }
             });
         }
@@ -895,7 +891,11 @@ pub fn seed_claude_auth(config: &Config) {
             let _ = Command::new("docker")
                 .args(["exec", "-u", "root"])
                 .arg(container)
-                .args(["chown", "agent:agent", "/home/agent/.claude/.credentials.json"])
+                .args([
+                    "chown",
+                    "agent:agent",
+                    "/home/agent/.claude/.credentials.json",
+                ])
                 .status();
             eprintln!("  Copied Claude credentials from host");
         }

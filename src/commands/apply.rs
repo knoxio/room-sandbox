@@ -19,7 +19,9 @@ pub fn run() -> Result<()> {
     display_actions(&config, &drift)?;
 
     if drift.is_destructive() {
-        eprintln!("\n  WARNING: This includes destructive changes that will delete existing workspaces.\n");
+        eprintln!(
+            "\n  WARNING: This includes destructive changes that will delete existing workspaces.\n"
+        );
     }
 
     let confirm = Confirm::new("Apply these changes?")
@@ -52,7 +54,9 @@ pub fn apply_with_config(config: &Config) -> Result<()> {
     display_actions(config, &drift)?;
 
     if drift.is_destructive() {
-        eprintln!("\n  WARNING: This includes destructive changes that will delete existing workspaces.\n");
+        eprintln!(
+            "\n  WARNING: This includes destructive changes that will delete existing workspaces.\n"
+        );
     }
 
     let confirm = Confirm::new("Apply these changes?")
@@ -213,9 +217,7 @@ fn apply_changes(config: &Config, drift: &state::Drift) -> Result<()> {
     let needs_instructions = drift.sections.iter().any(|s| {
         matches!(
             s.impact,
-            DriftImpact::Agents
-                | DriftImpact::InstructionsOnly
-                | DriftImpact::Destructive
+            DriftImpact::Agents | DriftImpact::InstructionsOnly | DriftImpact::Destructive
         )
     });
     if needs_instructions && docker::is_running(config) {

@@ -14,17 +14,18 @@ pub fn run() -> Result<()> {
     eprintln!("This will remove:");
     eprintln!("  .room-sandbox/     (workspaces, Docker assets, state, .env)");
 
-    if let Some(ref config) = config {
-        if docker::is_running(config) {
-            eprintln!("  container '{}'  (will be stopped and removed)", config.project.container_name);
-        }
+    if let Some(ref config) = config
+        && docker::is_running(config)
+    {
+        eprintln!(
+            "  container '{}'  (will be stopped and removed)",
+            config.project.container_name
+        );
     }
 
     eprintln!("\n  sandbox.toml will be kept.");
 
-    let confirm = Confirm::new("Proceed?")
-        .with_default(false)
-        .prompt()?;
+    let confirm = Confirm::new("Proceed?").with_default(false).prompt()?;
 
     if !confirm {
         eprintln!("Aborted.");
@@ -32,11 +33,11 @@ pub fn run() -> Result<()> {
     }
 
     // Stop container if running
-    if let Some(ref config) = config {
-        if docker::is_running(config) {
-            eprintln!("Stopping container...");
-            docker::down()?;
-        }
+    if let Some(ref config) = config
+        && docker::is_running(config)
+    {
+        eprintln!("Stopping container...");
+        docker::down()?;
     }
 
     eprintln!("Removing .room-sandbox/...");

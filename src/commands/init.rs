@@ -146,9 +146,18 @@ fn run_wizard(detected_repo: Option<String>) -> Result<Config> {
     // 3. Languages
     eprintln!();
     let all_languages = vec![
-        LangOption { lang: Language::Rust, label: "rust" },
-        LangOption { lang: Language::Node, label: "node" },
-        LangOption { lang: Language::Python, label: "python" },
+        LangOption {
+            lang: Language::Rust,
+            label: "rust",
+        },
+        LangOption {
+            lang: Language::Node,
+            label: "node",
+        },
+        LangOption {
+            lang: Language::Python,
+            label: "python",
+        },
     ];
     let defaults: Vec<usize> = all_languages
         .iter()
@@ -166,22 +175,57 @@ fn run_wizard(detected_repo: Option<String>) -> Result<Config> {
     // 4. Utilities
     eprintln!();
     let all_utilities = vec![
-        UtilityOption { utility: Utility::Glow, label: "glow (markdown reader)" },
-        UtilityOption { utility: Utility::Playwright, label: "playwright (browser automation)" },
-        UtilityOption { utility: Utility::Just, label: "just (command runner)" },
-        UtilityOption { utility: Utility::Mise, label: "mise (tool version manager)" },
-        UtilityOption { utility: Utility::Proto, label: "proto (toolchain manager)" },
-        UtilityOption { utility: Utility::Pulumi, label: "pulumi (infrastructure as code)" },
-        UtilityOption { utility: Utility::Ansible, label: "ansible (automation, requires python)" },
-        UtilityOption { utility: Utility::AwsCli, label: "aws-cli (AWS command line)" },
-        UtilityOption { utility: Utility::Terraform, label: "terraform (infrastructure as code)" },
-        UtilityOption { utility: Utility::Docker, label: "docker (Docker-in-Docker CLI)" },
-        UtilityOption { utility: Utility::Kubectl, label: "kubectl (Kubernetes CLI)" },
-        UtilityOption { utility: Utility::Yq, label: "yq (YAML processor)" },
+        UtilityOption {
+            utility: Utility::Glow,
+            label: "glow (markdown reader)",
+        },
+        UtilityOption {
+            utility: Utility::Playwright,
+            label: "playwright (browser automation)",
+        },
+        UtilityOption {
+            utility: Utility::Just,
+            label: "just (command runner)",
+        },
+        UtilityOption {
+            utility: Utility::Mise,
+            label: "mise (tool version manager)",
+        },
+        UtilityOption {
+            utility: Utility::Proto,
+            label: "proto (toolchain manager)",
+        },
+        UtilityOption {
+            utility: Utility::Pulumi,
+            label: "pulumi (infrastructure as code)",
+        },
+        UtilityOption {
+            utility: Utility::Ansible,
+            label: "ansible (automation, requires python)",
+        },
+        UtilityOption {
+            utility: Utility::AwsCli,
+            label: "aws-cli (AWS command line)",
+        },
+        UtilityOption {
+            utility: Utility::Terraform,
+            label: "terraform (infrastructure as code)",
+        },
+        UtilityOption {
+            utility: Utility::Docker,
+            label: "docker (Docker-in-Docker CLI)",
+        },
+        UtilityOption {
+            utility: Utility::Kubectl,
+            label: "kubectl (Kubernetes CLI)",
+        },
+        UtilityOption {
+            utility: Utility::Yq,
+            label: "yq (YAML processor)",
+        },
     ];
 
-    let utility_selections = MultiSelect::new("Utilities:", all_utilities.clone())
-        .prompt()?;
+    let utility_selections = MultiSelect::new("Utilities:", all_utilities.clone()).prompt()?;
 
     let utilities: Vec<Utility> = utility_selections.into_iter().map(|u| u.utility).collect();
 
@@ -199,11 +243,7 @@ fn run_wizard(detected_repo: Option<String>) -> Result<Config> {
     let roles = vec!["coder", "reviewer", "manager"];
     let mut agent_defs: Vec<AgentDef> = Vec::new();
     for name in &agent_name_list {
-        let role_selection = Select::new(
-            &format!("Role for '{name}':"),
-            roles.clone(),
-        )
-        .prompt()?;
+        let role_selection = Select::new(&format!("Role for '{name}':"), roles.clone()).prompt()?;
         let role = match role_selection {
             "reviewer" => AgentRole::Reviewer,
             "manager" => AgentRole::Manager,
@@ -242,7 +282,10 @@ fn run_wizard(detected_repo: Option<String>) -> Result<Config> {
 
         let selection = Select::new("Auth method:", auth_options.clone()).prompt()?;
 
-        let selected_idx = auth_options.iter().position(|o| *o == selection).unwrap_or(0);
+        let selected_idx = auth_options
+            .iter()
+            .position(|o| *o == selection)
+            .unwrap_or(0);
         if selected_idx < gh_accounts.len() {
             auth_method = AuthMethod::GhCli;
             selected_gh_account = Some(gh_accounts[selected_idx].username.clone());
@@ -283,7 +326,10 @@ fn run_wizard(detected_repo: Option<String>) -> Result<Config> {
             mount_ssh,
             gh_account: gh_account_for_env,
         },
-        environment: EnvironmentConfig { languages, utilities },
+        environment: EnvironmentConfig {
+            languages,
+            utilities,
+        },
     })
 }
 
@@ -304,7 +350,10 @@ fn build_from_args(args: InitArgs, detected_repo: Option<String>) -> Result<Conf
         .agents
         .unwrap_or_else(|| vec!["r2d2".into(), "bumblebee".into(), "saphire".into()])
         .into_iter()
-        .map(|name| AgentDef { name, role: AgentRole::default() })
+        .map(|name| AgentDef {
+            name,
+            role: AgentRole::default(),
+        })
         .collect();
 
     let languages = args
@@ -361,7 +410,10 @@ fn build_from_args(args: InitArgs, detected_repo: Option<String>) -> Result<Conf
             mount_ssh: auth_method == AuthMethod::Ssh,
             gh_account: None,
         },
-        environment: EnvironmentConfig { languages, utilities },
+        environment: EnvironmentConfig {
+            languages,
+            utilities,
+        },
     })
 }
 
@@ -414,13 +466,11 @@ fn generate_env(config: &Config) -> Result<String> {
                     }
                 })
                 .unwrap_or_default();
-            let account_label = config
-                .auth
-                .gh_account
-                .as_deref()
-                .unwrap_or("default");
+            let account_label = config.auth.gh_account.as_deref().unwrap_or("default");
             lines.push(String::new());
-            lines.push(format!("# GitHub token (from gh CLI, account: {account_label})"));
+            lines.push(format!(
+                "# GitHub token (from gh CLI, account: {account_label})"
+            ));
             lines.push(format!("GH_TOKEN={token}"));
         }
         AuthMethod::Pat => {
@@ -468,26 +518,27 @@ fn detect_gh_accounts() -> Vec<GhAccount> {
     for line in text.lines() {
         let trimmed = line.trim();
         // Lines like: "✓ Logged in to github.com account knoxio (keyring)"
-        if trimmed.contains("Logged in") && trimmed.contains("account") {
-            if let Some(after_account) = trimmed.split("account ").nth(1) {
-                let username = after_account
-                    .split_whitespace()
-                    .next()
-                    .unwrap_or("")
-                    .to_string();
-                if !username.is_empty() {
-                    accounts.push(GhAccount {
-                        username,
-                        active: false,
-                    });
-                }
+        if trimmed.contains("Logged in")
+            && trimmed.contains("account")
+            && let Some(after_account) = trimmed.split("account ").nth(1)
+        {
+            let username = after_account
+                .split_whitespace()
+                .next()
+                .unwrap_or("")
+                .to_string();
+            if !username.is_empty() {
+                accounts.push(GhAccount {
+                    username,
+                    active: false,
+                });
             }
         }
         // Lines like: "- Active account: true"
-        if trimmed.contains("Active account: true") {
-            if let Some(last) = accounts.last_mut() {
-                last.active = true;
-            }
+        if trimmed.contains("Active account: true")
+            && let Some(last) = accounts.last_mut()
+        {
+            last.active = true;
         }
     }
 
@@ -503,11 +554,11 @@ fn detect_from_shallow_clone(repo_input: &str) -> Vec<Language> {
         vec![repo_input.to_string()]
     } else {
         vec![
-            format!("https://github.com/{}.git", repo_input.trim_end_matches(".git")),
             format!(
-                "git@github.com:{}.git",
+                "https://github.com/{}.git",
                 repo_input.trim_end_matches(".git")
             ),
+            format!("git@github.com:{}.git", repo_input.trim_end_matches(".git")),
         ]
     };
 
@@ -517,12 +568,12 @@ fn detect_from_shallow_clone(repo_input: &str) -> Vec<Language> {
             .arg(&temp)
             .output();
 
-        if let Ok(output) = result {
-            if output.status.success() {
-                let langs = config::detect_languages(&temp);
-                let _ = std::fs::remove_dir_all(&temp);
-                return langs;
-            }
+        if let Ok(output) = result
+            && output.status.success()
+        {
+            let langs = config::detect_languages(&temp);
+            let _ = std::fs::remove_dir_all(&temp);
+            return langs;
         }
     }
 
