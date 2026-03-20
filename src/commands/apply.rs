@@ -11,8 +11,9 @@ pub fn run() -> Result<()> {
 
     if drift.is_empty() {
         eprintln!("Everything is up to date — nothing to apply.");
-        // Still ensure personality files exist (idempotent)
+        // Still ensure symlinks and personality files exist (idempotent)
         if docker::is_running(&config) {
+            docker::ensure_workspace_symlinks(&config)?;
             docker::inject_agent_instructions(&config)?;
         }
         return Ok(());
@@ -201,11 +202,11 @@ fn apply_changes(config: &Config, drift: &state::Drift) -> Result<()> {
                     }
                 }
 
-                // Remove stale workspaces
+                // Remove stale workspaces (skip hidden dirs like .pnpm-store)
                 if let Ok(entries) = std::fs::read_dir(config::workspaces_dir()) {
                     for entry in entries.flatten() {
                         let dir_name = entry.file_name().to_string_lossy().to_string();
-                        if !config.has_agent(&dir_name) {
+                        if !dir_name.starts_with('.') && !config.has_agent(&dir_name) {
                             eprintln!("  [remove] {dir_name}");
                             std::fs::remove_dir_all(entry.path())?;
                         }
@@ -237,6 +238,7 @@ fn apply_changes(config: &Config, drift: &state::Drift) -> Result<()> {
     // Inject agent instructions whenever container was rebuilt (fresh volumes)
     // or agents/room config changed
     if docker::is_running(config) {
+        docker::ensure_workspace_symlinks(config)?;
         eprintln!("Writing agent instructions...");
         docker::inject_agent_instructions(config)?;
     }

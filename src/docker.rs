@@ -18,7 +18,9 @@ RUN apt-get update && apt-get install -y \
             .to_string(),
     ];
 
-    // Node.js — always installed (required for Claude Code), extras if user selected node
+    let needs_node =
+        languages.contains(&Language::Node) || utilities.contains(&Utility::Playwright);
+
     if languages.contains(&Language::Node) {
         sections.push(
             r#"# Node.js
@@ -30,9 +32,9 @@ RUN curl -fsSL https://deb.nodesource.com/setup_22.x | bash - \
     && npm install -g turbo"#
                 .to_string(),
         );
-    } else {
+    } else if needs_node {
         sections.push(
-            r#"# Node.js (required for Claude Code)
+            r#"# Node.js (required for Playwright)
 RUN curl -fsSL https://deb.nodesource.com/setup_22.x | bash - \
     && apt-get install -y nodejs \
     && rm -rf /var/lib/apt/lists/*"#
@@ -52,9 +54,10 @@ RUN apt-get update && apt-get install -y \
 
     // Claude Code (always installed — room-ralph depends on it)
     sections.push(
-        r#"# Claude Code
-RUN npm install -g @anthropic-ai/claude-code \
-    && mv "$(which claude)" "$(which claude)-real"
+        r#"# Claude Code (native binary)
+RUN curl -fsSL https://claude.ai/install.sh | sh \
+    && CLAUDE_BIN=$(which claude || echo /root/.local/bin/claude) \
+    && mv "$CLAUDE_BIN" /usr/local/bin/claude-real
 COPY claude-wrapper.sh /usr/local/bin/claude
 RUN chmod +x /usr/local/bin/claude"#
             .to_string(),
@@ -478,6 +481,23 @@ pub fn is_running(config: &Config) -> bool {
         .unwrap_or(false)
 }
 
+/// Ensure /workspaces/<name> symlinks exist inside the container for all agents.
+/// The entrypoint creates these on boot, but agents added after boot need them too.
+pub fn ensure_workspace_symlinks(config: &Config) -> Result<()> {
+    let container = &config.project.container_name;
+    for agent in &config.agents {
+        let link = format!("/workspaces/{}", agent.name);
+        let target = format!("/mnt/sandbox-root/{}", agent.name);
+        // ln -sfn is idempotent
+        let _ = Command::new("docker")
+            .args(["exec", "-u", "agent"])
+            .arg(container)
+            .args(["ln", "-sfn", &target, &link])
+            .output();
+    }
+    Ok(())
+}
+
 /// Write role-based CLAUDE.md for each agent into the container's project-scoped config.
 pub fn inject_agent_instructions(config: &Config) -> Result<()> {
     let container = &config.project.container_name;
@@ -573,7 +593,43 @@ Use `/set_status <text>` to keep your presence status updated:
 - `/set_status idle — waiting for tasks`
 - `/set_status reviewing PR #42`
 
-Update your status whenever you change what you're doing."#;
+Update your status whenever you change what you're doing.
+
+## Before Pushing
+
+Run this checklist before every push:
+1. Format: run the project's formatter (prettier, cargo fmt, etc.)
+2. Lint: run the project's linter
+3. Typecheck: run typecheck if applicable
+4. Test: run the test suite
+5. Verify the lockfile is up to date (no uncommitted changes)
+
+Do NOT push and wait for CI to catch issues — run checks locally first.
+
+## Rebase Recovery
+
+When `git rebase` fails (e.g., due to linter hooks or complex conflicts):
+1. Create a fresh branch from the target: `git checkout -b <new-branch> origin/main`
+2. Cherry-pick your commits: `git cherry-pick <commit-hash>` (one at a time)
+3. Run checks after each cherry-pick
+4. Force-push to your PR branch if needed
+
+This is standard procedure, not an edge case. Use it early rather than fighting rebases.
+
+## Branch Ownership
+
+- Never push to another agent's branch without asking in the room first
+- Each agent works on their own feature branch
+- If you need to build on another agent's work, branch from their branch or wait for merge
+
+## When Idle
+
+When all your tasks are done and the taskboard has no open work:
+- Check for unmerged approved PRs that might need rebasing
+- Run typecheck/lint on main to catch regressions
+- Offer to help other agents with rebases or blockers
+- Ask the manager if there's upcoming work to prepare for
+- Do NOT silently poll — announce you're available in the room"#;
 
 fn generate_role_instructions(name: &str, role: &crate::config::AgentRole, room: &str) -> String {
     use crate::config::AgentRole;
@@ -614,18 +670,26 @@ You are a **reviewer** agent. Your primary responsibilities:
 - Flag security issues, bugs, or architectural concerns
 
 ### Workflow
-1. `/taskboard list` to find tasks in review status
-2. Review the associated PR — check logic, edge cases, tests
-3. Run the project's linter and test suite on the branch
-4. Leave inline comments on specific issues via `gh pr review`
-5. Approve or request changes with clear reasoning
-6. Notify the room when review is complete
-7. `/taskboard finish <id>` after approving the PR
+1. `/taskboard list` to find tasks in `in_review` status
+2. Announce in the room that you're reviewing (you cannot `/taskboard claim` in_review tasks)
+3. Wait for CI to pass before starting review — do not review red PRs
+4. Check if another reviewer is already on it to avoid duplicate reviews
+5. Review the PR — check logic, correctness, edge cases, tests, error handling
+6. Run the project's linter and test suite on the branch locally
+7. Leave inline comments via `gh pr review`
+8. Approve or request changes with clear reasoning
+9. `/taskboard finish <id>` after approving
+
+### Review Severity
+- **Request changes**: bugs, security issues, missing error handling, broken tests, logic errors
+- **Approve with comments**: style nits, naming suggestions, minor improvements
+- Do NOT block PRs for trivial style or lint issues that don't affect correctness
+- If a PR is good, approve it quickly — velocity matters
 
 ### Guidelines
 - Do NOT write code or implement features yourself
-- Focus on catching bugs, not style preferences
-- If a PR is good, approve it quickly — don't block unnecessarily"#
+- Coordinate with other reviewers — check the room before starting a review
+- Review base/dependency PRs before downstream PRs"#
         }
 
         AgentRole::Manager => {
@@ -696,14 +760,17 @@ fn generate_personality_file(_name: &str, role: &crate::config::AgentRole) -> St
         }
         AgentRole::Reviewer => {
             "You are a code review agent. Your workflow:\n\
-             1. `/taskboard list` — find tasks in review status\n\
-             2. Review the PR — check correctness, test coverage, edge cases\n\
-             3. Run the project's linter and test suite on the branch\n\
-             4. Leave clear, actionable feedback via `gh pr review`\n\
-             5. Approve or request changes with specific reasoning\n\
-             6. `/taskboard finish <id>` after approving\n\n\
-             You do not write feature code — you read and critique it. \
-             Flag security issues, performance concerns, and missing tests."
+             1. `/taskboard list` — find tasks in `in_review` status\n\
+             2. Announce in room you're reviewing (cannot claim in_review tasks)\n\
+             3. Wait for CI to pass before reviewing — do not review red PRs\n\
+             4. Check if another reviewer is already on it\n\
+             5. Review the PR — correctness, test coverage, error handling, edge cases\n\
+             6. Leave feedback via `gh pr review` — approve or request changes\n\
+             7. `/taskboard finish <id>` after approving\n\n\
+             You do not write feature code — you read and critique it.\n\
+             Request changes for: bugs, security, missing error handling, broken tests.\n\
+             Approve with comments for: style nits, naming, minor improvements.\n\
+             Do NOT block PRs for trivial issues — velocity matters."
         }
         AgentRole::Manager => {
             "You are a coordination agent. Your workflow:\n\
@@ -722,7 +789,10 @@ fn generate_personality_file(_name: &str, role: &crate::config::AgentRole) -> St
         "{role_prompt}\n\n\
          IMPORTANT: Always use `/taskboard` commands — never ask for work in the room \
          if the taskboard has tasks. Always claim before starting. Always update progress.\n\
-         Use `/set_status <text>` to keep your presence status current (e.g. working on tb-003, idle, reviewing PR #5).\n"
+         Use `/set_status <text>` to keep your presence status current.\n\
+         Before every push: format, lint, typecheck, test. Do NOT rely on CI.\n\
+         Never push to another agent's branch without asking first.\n\
+         When idle: check for stale PRs, run checks on main, announce availability.\n"
     )
 }
 

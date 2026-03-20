@@ -5,11 +5,20 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [1.4.0] - 2026-03-20
+
+### Added
+- Correct `/taskboard` command reference in agent prompts (post, claim, plan, approve, update, review, finish, cancel)
+- `/set_status` instructions for agent presence updates
+- Agent personality files always injected on `apply` and `agent start`
+- Claude auth warning shown after container rebuild
+- `agent start --all` skips already-running agents instead of erroring
 
 ### Fixed
 - Auto-tag uses PAT (`RELEASE_TOKEN`) so tag push triggers the release workflow
 - `clean` uses `docker rm -f` directly instead of compose (no `.env` dependency, handles stopped containers)
+- `apply` regenerates `.env` when missing (clean → apply flow)
+- Personality files always written (not gated on drift type)
 
 ## [1.3.0] - 2026-03-20
 
