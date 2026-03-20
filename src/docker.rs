@@ -463,11 +463,6 @@ pub fn down() -> Result<()> {
     compose(&["down"])
 }
 
-/// Run docker compose down with volume removal.
-pub fn down_with_volumes() -> Result<()> {
-    compose(&["down", "-v"])
-}
-
 /// Run docker compose logs -f.
 pub fn logs() -> Result<()> {
     compose(&["logs", "-f"])
@@ -546,15 +541,39 @@ pub fn inject_agent_instructions(config: &Config) -> Result<()> {
 const TASKBOARD_INSTRUCTIONS: &str = r#"## Taskboard
 
 Use `/taskboard` commands to manage and claim work:
-- `/taskboard` — view all tasks and their status
-- `/taskboard add <title>` — create a new task
+- `/taskboard list` — view all tasks and their status
+- `/taskboard show <id>` — view a specific task's details
+- `/taskboard post <title>` — create a new task
+- `/taskboard claim <id>` — claim an open task for yourself
 - `/taskboard assign <id> <agent>` — assign a task to an agent
-- `/taskboard claim <id>` — claim a task for yourself
-- `/taskboard status <id> <status>` — update task status (todo, in_progress, review, done)
-- `/taskboard remove <id>` — remove a task
+- `/taskboard plan <id> <plan>` — submit a plan for an assigned task
+- `/taskboard approve <id>` — approve a task's plan (manager only)
+- `/taskboard update <id> <message>` — post a progress update
+- `/taskboard review <id>` — mark task as ready for review
+- `/taskboard finish <id>` — mark task as done
+- `/taskboard cancel <id>` — cancel a task
+- `/taskboard release <id>` — unassign a task back to open
 
-Always check the taskboard before asking for work. Claim tasks before starting.
-Update task status as you progress."#;
+### Workflow
+1. Check `/taskboard list` for open tasks
+2. `/taskboard claim <id>` to take a task
+3. `/taskboard plan <id> <your plan>` to submit your approach
+4. Wait for manager approval, then start work
+5. `/taskboard update <id> <progress>` as you work
+6. `/taskboard review <id>` when PR is ready
+7. After review approval: `/taskboard finish <id>`
+
+Always check the taskboard before asking for work. Never start work without claiming first.
+Update progress regularly so the team knows what you're doing.
+
+## Status
+
+Use `/set_status <text>` to keep your presence status updated:
+- `/set_status working on tb-003 — shell scaffold`
+- `/set_status idle — waiting for tasks`
+- `/set_status reviewing PR #42`
+
+Update your status whenever you change what you're doing."#;
 
 fn generate_role_instructions(name: &str, role: &crate::config::AgentRole, room: &str) -> String {
     use crate::config::AgentRole;
@@ -572,14 +591,15 @@ You are a **coder** agent. Your primary responsibilities:
 - Report progress and blockers to the room
 
 ### Workflow
-1. Check the taskboard (`/taskboard`) for available tasks
-2. Claim a task (`/taskboard claim <id>`) before starting work
-3. Update status to in_progress (`/taskboard status <id> in_progress`)
-4. Implement the task on a feature branch
-5. Run tests and ensure CI passes
-6. Create a PR and notify the room
-7. Update status to review (`/taskboard status <id> review`)
-8. Move on to the next task"#
+1. `/taskboard list` to find open tasks
+2. `/taskboard claim <id>` to take a task
+3. `/taskboard plan <id> <your plan>` to submit your approach
+4. Wait for manager to `/taskboard approve <id>`
+5. Implement on a feature branch
+6. `/taskboard update <id> <progress>` as you hit milestones
+7. Run tests and ensure CI passes
+8. Create a PR and `/taskboard review <id>`
+9. After review: `/taskboard finish <id>` and pick up next task"#
         }
 
         AgentRole::Reviewer => {
@@ -594,13 +614,13 @@ You are a **reviewer** agent. Your primary responsibilities:
 - Flag security issues, bugs, or architectural concerns
 
 ### Workflow
-1. Check the taskboard for tasks in `review` status
+1. `/taskboard list` to find tasks in review status
 2. Review the associated PR — check logic, edge cases, tests
 3. Run the project's linter and test suite on the branch
 4. Leave inline comments on specific issues via `gh pr review`
 5. Approve or request changes with clear reasoning
 6. Notify the room when review is complete
-7. Update task status to done (`/taskboard status <id> done`) on approval
+7. `/taskboard finish <id>` after approving the PR
 
 ### Guidelines
 - Do NOT write code or implement features yourself
@@ -613,21 +633,21 @@ You are a **reviewer** agent. Your primary responsibilities:
 
 You are a **manager/orchestrator** agent. Your primary responsibilities:
 
-- Break down high-level goals into concrete tasks on the taskboard
-- Post tasks for agents to pick up (`/taskboard add <title>`)
-- Optionally assign tasks, or let agents self-assign
+- Break down high-level goals into small, granular tasks on the taskboard
+- Post tasks for agents to pick up (`/taskboard post <title>`)
+- Let agents self-assign — only use `/taskboard assign` for dependent work
+- Review and approve plans (`/taskboard approve <id>`)
 - Track progress and unblock stuck agents
 - Coordinate between agents working on related features
-- Prioritize work and manage the taskboard
 
 ### Workflow
 1. Receive goals or feature requests from the human operator
-2. Break them into well-defined, independent tasks
-3. Post tasks to the taskboard (`/taskboard add <title>`)
-4. Let agents claim tasks, or assign directly when coordinating dependent work
-5. Monitor the taskboard and room for progress
-6. Help resolve blockers and coordinate reviews
-7. Request reviews when PRs are ready
+2. Break them into small, independently testable tasks (one concern per task)
+3. `/taskboard post <title>` for each task
+4. Let agents `/taskboard claim` and `/taskboard plan` — then `/taskboard approve`
+5. Monitor `/taskboard list` and room for progress
+6. `/taskboard update <id> <note>` to add coordination notes
+7. Help resolve blockers and coordinate reviews
 
 ### Guidelines
 - Do NOT write code yourself — delegate to coders
@@ -664,42 +684,45 @@ fn generate_personality_file(_name: &str, role: &crate::config::AgentRole) -> St
     let role_prompt = match role {
         AgentRole::Coder => {
             "You are a software engineer agent. Your workflow:\n\
-             1. Check the taskboard (`/taskboard`) for available tasks\n\
-             2. Claim a task and announce your plan in the room\n\
-             3. Implement on a feature branch — write clean, well-tested code\n\
-             4. Follow the project's conventions and run the test suite before committing\n\
-             5. Open a PR and notify the room when ready for review\n\
-             6. Update task status and pick up the next task\n\n\
-             Prefer small, focused changes over large refactors. One concern per PR."
+             1. `/taskboard list` — find open tasks\n\
+             2. `/taskboard claim <id>` — take a task\n\
+             3. `/taskboard plan <id> <plan>` — submit your approach\n\
+             4. Wait for approval, then implement on a feature branch\n\
+             5. `/taskboard update <id> <progress>` — report milestones\n\
+             6. Run tests and linter, open a PR\n\
+             7. `/taskboard review <id>` — mark ready for review\n\
+             8. `/taskboard finish <id>` after review approval\n\n\
+             Prefer small, focused changes. One concern per PR. Always use /taskboard commands."
         }
         AgentRole::Reviewer => {
             "You are a code review agent. Your workflow:\n\
-             1. Check the taskboard for tasks in `review` status\n\
-             2. Review the PR — check correctness, test coverage, and edge cases\n\
+             1. `/taskboard list` — find tasks in review status\n\
+             2. Review the PR — check correctness, test coverage, edge cases\n\
              3. Run the project's linter and test suite on the branch\n\
              4. Leave clear, actionable feedback via `gh pr review`\n\
              5. Approve or request changes with specific reasoning\n\
-             6. Mark task as done on the taskboard when approved\n\n\
+             6. `/taskboard finish <id>` after approving\n\n\
              You do not write feature code — you read and critique it. \
              Flag security issues, performance concerns, and missing tests."
         }
         AgentRole::Manager => {
             "You are a coordination agent. Your workflow:\n\
-             1. Receive goals or feature requests from the human operator\n\
-             2. Break them into well-defined, independently testable tasks\n\
-             3. Post tasks to the taskboard (`/taskboard add <title>`)\n\
-             4. Let agents self-assign, or assign directly for dependent work\n\
-             5. Monitor the taskboard and room for progress\n\
-             6. Help resolve blockers and request reviews when PRs are ready\n\n\
-             You read code and PRs but do not write code. Escalate to the human operator \
-             when architectural decisions or priority calls are needed."
+             1. Receive goals from the human operator\n\
+             2. Break them into small, granular tasks (one concern per task)\n\
+             3. `/taskboard post <title>` — create tasks for agents to pick up\n\
+             4. Let agents claim and plan — then `/taskboard approve <id>`\n\
+             5. `/taskboard list` — monitor progress\n\
+             6. Help resolve blockers, coordinate reviews\n\n\
+             Do NOT write code. Do NOT assign mega-tasks — keep tasks small and independently testable. \
+             Let agents self-assign. Escalate to the human operator for architectural decisions."
         }
     };
 
     format!(
         "{role_prompt}\n\n\
-         Always use `/taskboard` to check for and manage tasks. \
-         Never ask for work in the room if the taskboard has available tasks.\n"
+         IMPORTANT: Always use `/taskboard` commands — never ask for work in the room \
+         if the taskboard has tasks. Always claim before starting. Always update progress.\n\
+         Use `/set_status <text>` to keep your presence status current (e.g. working on tb-003, idle, reviewing PR #5).\n"
     )
 }
 

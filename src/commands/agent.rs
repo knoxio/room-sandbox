@@ -125,15 +125,29 @@ pub fn start(names: &[String], all: bool, tail: bool, ralph_args: &[String]) -> 
     // Ensure container is running
     docker::ensure_running(&config)?;
 
-    // Check for already running agents
-    for name in &names {
-        if docker::is_agent_running(&config, name) {
-            bail!("agent '{name}' is already running — use `room-sandbox agent restart {name}`");
-        }
+    // Filter out already running agents
+    let names: Vec<String> = names
+        .into_iter()
+        .filter(|name| {
+            if docker::is_agent_running(&config, name) {
+                eprintln!("  {name} already running — skipping");
+                false
+            } else {
+                true
+            }
+        })
+        .collect();
+
+    if names.is_empty() {
+        eprintln!("All agents already running.");
+        return Ok(());
     }
 
     // Ensure room daemon + room exist
     docker::ensure_room(&config)?;
+
+    // Ensure personality files exist
+    docker::inject_agent_instructions(&config)?;
 
     if tail {
         docker::start_agents_tailed(&config, &names, ralph_args)?;

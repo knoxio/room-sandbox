@@ -11,6 +11,10 @@ pub fn run() -> Result<()> {
 
     if drift.is_empty() {
         eprintln!("Everything is up to date — nothing to apply.");
+        // Still ensure personality files exist (idempotent)
+        if docker::is_running(&config) {
+            docker::inject_agent_instructions(&config)?;
+        }
         return Ok(());
     }
 
@@ -230,16 +234,22 @@ fn apply_changes(config: &Config, drift: &state::Drift) -> Result<()> {
         docker::up()?;
     }
 
-    // Inject agent instructions if agents or room changed
-    let needs_instructions = drift.sections.iter().any(|s| {
-        matches!(
-            s.impact,
-            DriftImpact::Agents | DriftImpact::InstructionsOnly | DriftImpact::Destructive
-        )
-    });
-    if needs_instructions && docker::is_running(config) {
+    // Inject agent instructions whenever container was rebuilt (fresh volumes)
+    // or agents/room config changed
+    if docker::is_running(config) {
         eprintln!("Writing agent instructions...");
         docker::inject_agent_instructions(config)?;
+    }
+
+    // Warn about Claude auth if container was rebuilt (fresh volumes = no auth)
+    if needs_rebuild {
+        eprintln!();
+        eprintln!("\x1b[33m  !! Claude Code authentication required !!\x1b[0m");
+        eprintln!("  Container was rebuilt with fresh volumes — agents need to re-authenticate.");
+        eprintln!("  Run this once — the session is shared across all agents:");
+        eprintln!();
+        eprintln!("    room-sandbox claude <agent-name>");
+        eprintln!("    > type /login and follow the browser prompt");
     }
 
     Ok(())
