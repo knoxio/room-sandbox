@@ -5,14 +5,16 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [1.3.0] - 2026-03-20
 
 ### Added
 - Auto-tag workflow: merging `release/v*` branches auto-creates git tags
 - Release validation CI: checks Cargo.toml version matches branch, changelog has entry, tag doesn't exist
+- Custom personality files with `/taskboard` instructions per agent role
 
 ### Fixed
 - `apply` regenerates `.env` if missing (fixes apply-after-clean)
+- Docker volumes isolated per sandbox via compose project name
 
 ## [1.2.0] - 2026-03-20
 
