@@ -455,6 +455,14 @@ fn setup_sandbox_dir(config: &Config) -> Result<()> {
     Ok(())
 }
 
+/// Write .env file into .room-sandbox/. Public so `apply` can regenerate it after clean.
+pub fn write_env_file(config: &Config) -> Result<()> {
+    let dir = config::sandbox_dir();
+    std::fs::create_dir_all(&dir)?;
+    let content = generate_env(config)?;
+    std::fs::write(dir.join(".env"), content).context("failed to write .env")
+}
+
 fn generate_env(config: &Config) -> Result<String> {
     let mut lines = vec![
         "# === Required ===".to_string(),
