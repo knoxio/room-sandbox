@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 - Auto-tag uses PAT (`RELEASE_TOKEN`) so tag push triggers the release workflow
+- `clean` uses `docker rm -f` directly instead of compose (no `.env` dependency, handles stopped containers)
 
 ## [1.3.0] - 2026-03-20
 
