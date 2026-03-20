@@ -150,6 +150,23 @@ fn display_actions(config: &Config, drift: &state::Drift) -> Result<()> {
 }
 
 fn apply_changes(config: &Config, drift: &state::Drift) -> Result<()> {
+    // Ensure .room-sandbox/ and .env exist (may be missing after clean)
+    let sandbox_dir = config::sandbox_dir();
+    std::fs::create_dir_all(&sandbox_dir)?;
+    let env_path = sandbox_dir.join(".env");
+    if !env_path.exists() {
+        eprintln!("Regenerating .env...");
+        crate::commands::init::write_env_file(config)?;
+    }
+
+    // Ensure workspaces directory and clones exist
+    std::fs::create_dir_all(config::workspaces_dir())?;
+    for agent in &config.agents {
+        if !config::agent_workspace(&agent.name).exists() {
+            docker::clone_workspace(&config.project.repo, &agent.name)?;
+        }
+    }
+
     let needs_rebuild = drift.needs_container_rebuild();
     let needs_restart = drift.sections.iter().any(|s| {
         matches!(

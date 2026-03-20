@@ -50,3 +50,48 @@ jobs:
             echo "::error::CHANGELOG.md was not updated. Please add a changelog entry for your changes."
             exit 1
           fi
+
+  release-check:
+    name: Release Validation
+    if: github.event_name == 'pull_request' && startsWith(github.head_ref, 'release/v')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Extract expected version from branch
+        id: branch
+        run: |
+          BRANCH="${{ github.head_ref }}"
+          VERSION="${BRANCH#release/v}"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "tag=v$VERSION" >> "$GITHUB_OUTPUT"
+          echo "Expected version: $VERSION (tag: v$VERSION)"
+
+      - name: Check Cargo.toml version matches branch
+        run: |
+          CARGO_VERSION=$(grep '^version' Cargo.toml | head -1 | sed 's/.*"\(.*\)".*/\1/')
+          EXPECTED="${{ steps.branch.outputs.version }}"
+          if [ "$CARGO_VERSION" != "$EXPECTED" ]; then
+            echo "::error::Cargo.toml version ($CARGO_VERSION) does not match branch version ($EXPECTED)"
+            exit 1
+          fi
+          echo "Cargo.toml version: $CARGO_VERSION"
+
+      - name: Check CHANGELOG has entry for this version
+        run: |
+          VERSION="${{ steps.branch.outputs.version }}"
+          if grep -q "\[${VERSION}\]" CHANGELOG.md; then
+            echo "CHANGELOG.md has entry for $VERSION"
+          else
+            echo "::error::CHANGELOG.md is missing an entry for version $VERSION"
+            exit 1
+          fi
+
+      - name: Check tag does not already exist
+        run: |
+          TAG="${{ steps.branch.outputs.tag }}"
+          if git ls-remote --tags origin | grep -q "refs/tags/${TAG}$"; then
+            echo "::error::Tag $TAG already exists on remote. Bump the version."
+            exit 1
+          fi
+          echo "Tag $TAG is available"
