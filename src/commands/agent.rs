@@ -59,9 +59,16 @@ pub fn remove(name: &str) -> Result<()> {
     config.agents.retain(|a| a.name != name);
     config.save()?;
 
-    eprintln!("Removed agent '{name}' from sandbox.toml");
+    // Directly remove workspace if it exists
+    let workspace = config::agent_workspace(name);
+    if workspace.exists() {
+        eprintln!("Removing workspace...");
+        std::fs::remove_dir_all(workspace)?;
+    }
 
-    // Auto-apply (handles drift confirmation)
+    eprintln!("Removed agent '{name}'");
+
+    // Auto-apply (handles any other pending drift)
     crate::commands::apply::apply_with_config(&config)?;
 
     Ok(())
