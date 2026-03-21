@@ -112,16 +112,17 @@ utilities = ["glow", "just", "docker"]
 | `room-sandbox up` | Start the container |
 | `room-sandbox down` | Stop the container |
 | `room-sandbox logs` | Tail container logs |
+| `room-sandbox upgrade` | Rebuild container with latest packages (room, room-ralph, claude) |
 
 ## Agent Roles
 
-Roles map to [room-ralph personalities](https://github.com/knoxio/room-ralph) which set system prompts and tool profiles:
+Each role gets a custom personality file and project-scoped CLAUDE.md with role-specific instructions, taskboard workflow, and guidelines:
 
-| Role | Personality | Behavior |
-|------|-------------|----------|
-| **coder** | `coder` | Picks up tasks, writes code, runs tests, opens PRs |
-| **reviewer** | `reviewer` | Reviews PRs, checks quality, leaves feedback — does not write code |
-| **manager** | `coordinator` | Breaks down goals into tasks, manages the taskboard, coordinates agents |
+| Role | Behavior |
+|------|----------|
+| **coder** | Claims tasks, submits plans, implements on feature branches, uses `/taskboard request_review` when done |
+| **reviewer** | Uses `/taskboard qa-queue` to find work, `/taskboard review_claim` to take reviews, approves or rejects |
+| **manager** | Breaks goals into granular tasks via `/taskboard post`, approves plans, tracks progress with `/taskboard history` |
 
 ## Directory Layout
 

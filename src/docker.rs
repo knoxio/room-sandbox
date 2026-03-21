@@ -55,9 +55,10 @@ RUN apt-get update && apt-get install -y \
     // Claude Code (always installed — room-ralph depends on it)
     sections.push(
         r#"# Claude Code (native binary)
-RUN curl -fsSL https://claude.ai/install.sh | sh \
-    && CLAUDE_BIN=$(which claude || echo /root/.local/bin/claude) \
-    && mv "$CLAUDE_BIN" /usr/local/bin/claude-real
+RUN curl -fsSL https://claude.ai/install.sh | bash \
+    && cp -L /root/.local/bin/claude /usr/local/bin/claude-real \
+    && chmod 755 /usr/local/bin/claude-real \
+    && rm -rf /root/.local/share/claude /root/.local/bin/claude
 COPY claude-wrapper.sh /usr/local/bin/claude
 RUN chmod +x /usr/local/bin/claude"#
             .to_string(),
@@ -456,6 +457,11 @@ pub fn build() -> Result<()> {
     compose(&["build"])
 }
 
+/// Run docker compose build with --no-cache to pull latest packages.
+pub fn build_no_cache() -> Result<()> {
+    compose(&["build", "--no-cache"])
+}
+
 /// Run docker compose up -d.
 pub fn up() -> Result<()> {
     compose(&["up", "-d"])
@@ -499,11 +505,26 @@ pub fn ensure_workspace_symlinks(config: &Config) -> Result<()> {
 }
 
 /// Write role-based CLAUDE.md for each agent into the container's project-scoped config.
+/// Inject instructions for specific agents only.
+pub fn inject_instructions_for(config: &Config, names: &[String]) -> Result<()> {
+    let agents: Vec<_> = config
+        .agents
+        .iter()
+        .filter(|a| names.iter().any(|n| n == &a.name))
+        .collect();
+    inject_instructions_inner(config, &agents)
+}
+
 pub fn inject_agent_instructions(config: &Config) -> Result<()> {
+    let agents: Vec<_> = config.agents.iter().collect();
+    inject_instructions_inner(config, &agents)
+}
+
+fn inject_instructions_inner(config: &Config, agents: &[&crate::config::AgentDef]) -> Result<()> {
     let container = &config.project.container_name;
     let room = &config.room.default;
 
-    for agent in &config.agents {
+    for agent in agents {
         let project_dir = format!(
             "/home/agent/.claude/projects/-mnt-sandbox-root-{}",
             agent.name
@@ -560,28 +581,44 @@ pub fn inject_agent_instructions(config: &Config) -> Result<()> {
 
 const TASKBOARD_INSTRUCTIONS: &str = r#"## Taskboard
 
-Use `/taskboard` commands to manage and claim work:
-- `/taskboard list` — view all tasks and their status
-- `/taskboard show <id>` — view a specific task's details
-- `/taskboard post <title>` — create a new task
-- `/taskboard claim <id>` — claim an open task for yourself
-- `/taskboard assign <id> <agent>` — assign a task to an agent
-- `/taskboard plan <id> <plan>` — submit a plan for an assigned task
-- `/taskboard approve <id>` — approve a task's plan (manager only)
-- `/taskboard update <id> <message>` — post a progress update
-- `/taskboard review <id>` — mark task as ready for review
-- `/taskboard finish <id>` — mark task as done
-- `/taskboard cancel <id>` — cancel a task
-- `/taskboard release <id>` — unassign a task back to open
+### Task Lifecycle
+Open → Claimed → Planned → InProgress → AwaitingReview → ReviewClaimed → Finished
+
+### Commands
+
+**For coders:**
+- `/taskboard list` — view active tasks
+- `/taskboard mine` — view your assigned tasks
+- `/taskboard show <id>` — view task details
+- `/taskboard claim <id>` — claim an open task
+- `/taskboard plan <id> <plan>` — submit implementation plan
+- `/taskboard update <id> <notes>` — post progress update (also renews lease)
+- `/taskboard request_review <id>` — mark task ready for review (InProgress → AwaitingReview)
+- `/taskboard release <id>` — unassign back to open
+
+**For reviewers:**
+- `/taskboard qa-queue` — view tasks awaiting review
+- `/taskboard review_claim <id>` — claim a review (AwaitingReview → ReviewClaimed)
+- `/taskboard approve <id>` — approve review (ReviewClaimed → Finished)
+- `/taskboard reject <id> [reason]` — send back to coder (ReviewClaimed → InProgress)
+
+**For managers:**
+- `/taskboard post <description>` — create a new task
+- `/taskboard assign <id> <agent>` — assign a task
+- `/taskboard approve <id>` — approve a plan (Planned → InProgress)
+- `/taskboard history` — view finished/cancelled tasks
+- `/taskboard cancel <id> [reason]` — cancel a task
+
+**Help:** `/taskboard help <subcommand>` for usage details.
 
 ### Workflow
-1. Check `/taskboard list` for open tasks
-2. `/taskboard claim <id>` to take a task
-3. `/taskboard plan <id> <your plan>` to submit your approach
-4. Wait for manager approval, then start work
-5. `/taskboard update <id> <progress>` as you work
-6. `/taskboard review <id>` when PR is ready
-7. After review approval: `/taskboard finish <id>`
+1. `/taskboard list` or `/taskboard mine` — find work
+2. `/taskboard claim <id>` — take a task
+3. `/taskboard plan <id> <plan>` — submit your approach
+4. Wait for `/taskboard approve` (Planned → InProgress)
+5. `/taskboard update <id> <progress>` — report milestones
+6. `/taskboard request_review <id>` — when PR is ready (InProgress → AwaitingReview)
+7. Reviewer: `/taskboard review_claim <id>` → review → `/taskboard approve <id>` (→ Finished)
 
 Always check the taskboard before asking for work. Never start work without claiming first.
 Update progress regularly so the team knows what you're doing.
@@ -647,15 +684,15 @@ You are a **coder** agent. Your primary responsibilities:
 - Report progress and blockers to the room
 
 ### Workflow
-1. `/taskboard list` to find open tasks
-2. `/taskboard claim <id>` to take a task
+1. `/taskboard list` or `/taskboard mine` to find work
+2. `/taskboard claim <id>` to take an open task
 3. `/taskboard plan <id> <your plan>` to submit your approach
-4. Wait for manager to `/taskboard approve <id>`
+4. Wait for manager to `/taskboard approve` (Planned → InProgress)
 5. Implement on a feature branch
 6. `/taskboard update <id> <progress>` as you hit milestones
-7. Run tests and ensure CI passes
-8. Create a PR and `/taskboard review <id>`
-9. After review: `/taskboard finish <id>` and pick up next task"#
+7. Run tests and ensure CI passes locally
+8. Create a PR and `/taskboard request_review <id>` (InProgress → AwaitingReview)
+9. After reviewer approves, task moves to Finished — pick up next task"#
         }
 
         AgentRole::Reviewer => {
@@ -670,25 +707,25 @@ You are a **reviewer** agent. Your primary responsibilities:
 - Flag security issues, bugs, or architectural concerns
 
 ### Workflow
-1. `/taskboard list` to find tasks in `in_review` status
-2. Announce in the room that you're reviewing (you cannot `/taskboard claim` in_review tasks)
+1. `/taskboard qa-queue` to find tasks awaiting review
+2. `/taskboard review_claim <id>` to claim a review (AwaitingReview → ReviewClaimed)
 3. Wait for CI to pass before starting review — do not review red PRs
-4. Check if another reviewer is already on it to avoid duplicate reviews
-5. Review the PR — check logic, correctness, edge cases, tests, error handling
-6. Run the project's linter and test suite on the branch locally
-7. Leave inline comments via `gh pr review`
-8. Approve or request changes with clear reasoning
-9. `/taskboard finish <id>` after approving
+4. Review the PR — check logic, correctness, edge cases, tests, error handling
+5. Run the project's linter and test suite on the branch locally
+6. Leave inline comments via `gh pr review`
+7. `/taskboard approve <id>` to approve (ReviewClaimed → Finished)
+8. Or `/taskboard reject <id> <reason>` to send back (ReviewClaimed → InProgress)
 
 ### Review Severity
-- **Request changes**: bugs, security issues, missing error handling, broken tests, logic errors
+- **Reject** (`/taskboard reject`): bugs, security issues, missing error handling, broken tests, logic errors
 - **Approve with comments**: style nits, naming suggestions, minor improvements
 - Do NOT block PRs for trivial style or lint issues that don't affect correctness
 - If a PR is good, approve it quickly — velocity matters
 
 ### Guidelines
 - Do NOT write code or implement features yourself
-- Coordinate with other reviewers — check the room before starting a review
+- Use `/taskboard qa-queue` — do not manually scan `/taskboard list` for reviews
+- Coordinate with other reviewers — check if a task is already ReviewClaimed
 - Review base/dependency PRs before downstream PRs"#
         }
 
@@ -698,26 +735,28 @@ You are a **reviewer** agent. Your primary responsibilities:
 You are a **manager/orchestrator** agent. Your primary responsibilities:
 
 - Break down high-level goals into small, granular tasks on the taskboard
-- Post tasks for agents to pick up (`/taskboard post <title>`)
+- Post tasks for agents to pick up (`/taskboard post <description>`)
 - Let agents self-assign — only use `/taskboard assign` for dependent work
-- Review and approve plans (`/taskboard approve <id>`)
+- Approve plans (`/taskboard approve <id>` when Planned → InProgress)
 - Track progress and unblock stuck agents
 - Coordinate between agents working on related features
 
 ### Workflow
 1. Receive goals or feature requests from the human operator
 2. Break them into small, independently testable tasks (one concern per task)
-3. `/taskboard post <title>` for each task
-4. Let agents `/taskboard claim` and `/taskboard plan` — then `/taskboard approve`
-5. Monitor `/taskboard list` and room for progress
-6. `/taskboard update <id> <note>` to add coordination notes
-7. Help resolve blockers and coordinate reviews
+3. `/taskboard post <description>` for each task
+4. Let agents `/taskboard claim` and `/taskboard plan`
+5. `/taskboard approve <id>` to approve plans (Planned → InProgress)
+6. Monitor with `/taskboard list`, `/taskboard mine`, `/taskboard history`
+7. `/taskboard update <id> <note>` to add coordination notes
+8. Help resolve blockers and coordinate reviews
 
 ### Guidelines
 - Do NOT write code yourself — delegate to coders
 - Keep tasks small and independently testable
 - Ensure agents aren't working on conflicting changes
 - Prefer letting agents self-assign — only assign directly when coordinating dependent work
+- Use `/taskboard history` to track completed work
 - Escalate to the human operator when decisions are needed"#
         }
     };
@@ -748,27 +787,28 @@ fn generate_personality_file(_name: &str, role: &crate::config::AgentRole) -> St
     let role_prompt = match role {
         AgentRole::Coder => {
             "You are a software engineer agent. Your workflow:\n\
-             1. `/taskboard list` — find open tasks\n\
-             2. `/taskboard claim <id>` — take a task\n\
+             1. `/taskboard list` or `/taskboard mine` — find work\n\
+             2. `/taskboard claim <id>` — take an open task\n\
              3. `/taskboard plan <id> <plan>` — submit your approach\n\
-             4. Wait for approval, then implement on a feature branch\n\
-             5. `/taskboard update <id> <progress>` — report milestones\n\
-             6. Run tests and linter, open a PR\n\
-             7. `/taskboard review <id>` — mark ready for review\n\
-             8. `/taskboard finish <id>` after review approval\n\n\
+             4. Wait for `/taskboard approve` (Planned → InProgress)\n\
+             5. Implement on a feature branch\n\
+             6. `/taskboard update <id> <progress>` — report milestones\n\
+             7. Run tests and linter locally, open a PR\n\
+             8. `/taskboard request_review <id>` (InProgress → AwaitingReview)\n\
+             9. Reviewer approves → task Finished → pick up next task\n\n\
              Prefer small, focused changes. One concern per PR. Always use /taskboard commands."
         }
         AgentRole::Reviewer => {
             "You are a code review agent. Your workflow:\n\
-             1. `/taskboard list` — find tasks in `in_review` status\n\
-             2. Announce in room you're reviewing (cannot claim in_review tasks)\n\
-             3. Wait for CI to pass before reviewing — do not review red PRs\n\
-             4. Check if another reviewer is already on it\n\
-             5. Review the PR — correctness, test coverage, error handling, edge cases\n\
-             6. Leave feedback via `gh pr review` — approve or request changes\n\
-             7. `/taskboard finish <id>` after approving\n\n\
+             1. `/taskboard qa-queue` — find tasks awaiting review\n\
+             2. `/taskboard review_claim <id>` — claim a review (AwaitingReview → ReviewClaimed)\n\
+             3. Wait for CI to pass — do not review red PRs\n\
+             4. Review the PR — correctness, test coverage, error handling, edge cases\n\
+             5. Leave feedback via `gh pr review`\n\
+             6. `/taskboard approve <id>` — approve (ReviewClaimed → Finished)\n\
+             7. Or `/taskboard reject <id> <reason>` — send back (→ InProgress)\n\n\
              You do not write feature code — you read and critique it.\n\
-             Request changes for: bugs, security, missing error handling, broken tests.\n\
+             Reject for: bugs, security, missing error handling, broken tests.\n\
              Approve with comments for: style nits, naming, minor improvements.\n\
              Do NOT block PRs for trivial issues — velocity matters."
         }
@@ -776,9 +816,9 @@ fn generate_personality_file(_name: &str, role: &crate::config::AgentRole) -> St
             "You are a coordination agent. Your workflow:\n\
              1. Receive goals from the human operator\n\
              2. Break them into small, granular tasks (one concern per task)\n\
-             3. `/taskboard post <title>` — create tasks for agents to pick up\n\
-             4. Let agents claim and plan — then `/taskboard approve <id>`\n\
-             5. `/taskboard list` — monitor progress\n\
+             3. `/taskboard post <description>` — create tasks for agents\n\
+             4. Let agents claim and plan — then `/taskboard approve <id>` (Planned → InProgress)\n\
+             5. `/taskboard list` + `/taskboard history` — monitor progress\n\
              6. Help resolve blockers, coordinate reviews\n\n\
              Do NOT write code. Do NOT assign mega-tasks — keep tasks small and independently testable. \
              Let agents self-assign. Escalate to the human operator for architectural decisions."

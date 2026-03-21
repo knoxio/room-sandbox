@@ -64,6 +64,9 @@ enum Command {
         claude_args: Vec<String>,
     },
 
+    /// Rebuild container with latest packages (room, room-ralph, claude, utilities)
+    Upgrade,
+
     /// Remove all generated artifacts, keep sandbox.toml
     Clean,
 }
@@ -162,6 +165,7 @@ fn main() -> Result<()> {
         Command::Up => commands::up::run(),
         Command::Down => commands::down::run(),
         Command::Logs => commands::logs::run(),
+        Command::Upgrade => commands::upgrade::run(),
         Command::Clean => commands::clean::run(),
     }
 }

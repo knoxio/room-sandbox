@@ -153,8 +153,8 @@ pub fn start(names: &[String], all: bool, tail: bool, ralph_args: &[String]) -> 
     // Ensure room daemon + room exist
     docker::ensure_room(&config)?;
 
-    // Ensure personality files exist
-    docker::inject_agent_instructions(&config)?;
+    // Ensure personality files exist for agents being started
+    docker::inject_instructions_for(&config, &names)?;
 
     if tail {
         docker::start_agents_tailed(&config, &names, ralph_args)?;
@@ -197,9 +197,13 @@ pub fn restart(names: &[String], all: bool, tail: bool, ralph_args: &[String]) -
 
     for name in &names {
         if docker::is_agent_running(&config, name) {
+            eprintln!("Stopping {name}...");
             docker::kill_agent(&config, name)?;
         }
     }
+
+    // Wait for processes to fully die before restarting
+    std::thread::sleep(std::time::Duration::from_secs(3));
 
     start(&names, false, tail, ralph_args)
 }
