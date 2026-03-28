@@ -964,16 +964,16 @@ pub fn is_agent_running(config: &Config, name: &str) -> bool {
 pub fn kill_agent(config: &Config, name: &str) -> Result<()> {
     let container = &config.project.container_name;
     // Kill all matching PIDs and their children, not just head -1.
-    // Use pkill for breadth, then verify with pgrep and SIGKILL stragglers.
+    // Use [r]oom-ralph bracket trick so pgrep doesn't match this bash script itself.
     let script = format!(
-        r#"PIDS=$(pgrep -f "room-ralph.*{name}"); \
+        r#"PIDS=$(pgrep -f "[r]oom-ralph.*{name}"); \
            if [ -n "$PIDS" ]; then \
              for PID in $PIDS; do \
                kill -- -$PID 2>/dev/null; \
                kill $PID 2>/dev/null; \
              done; \
              sleep 2; \
-             PIDS=$(pgrep -f "room-ralph.*{name}"); \
+             PIDS=$(pgrep -f "[r]oom-ralph.*{name}"); \
              for PID in $PIDS; do \
                kill -9 -- -$PID 2>/dev/null; \
                kill -9 $PID 2>/dev/null; \
