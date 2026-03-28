@@ -452,6 +452,23 @@ fn compose(args: &[&str]) -> Result<()> {
     Ok(())
 }
 
+/// Run docker compose with captured output (no terminal streaming).
+/// Returns the stderr on failure for error inspection.
+fn compose_captured(args: &[&str]) -> std::result::Result<(), String> {
+    let dir = config::sandbox_dir();
+    let project = compose_project_name();
+    let output = Command::new("docker")
+        .args(["compose", "-p", &project, "-f"])
+        .arg(dir.join("docker-compose.yml"))
+        .args(args)
+        .output()
+        .map_err(|e| e.to_string())?;
+    if !output.status.success() {
+        return Err(String::from_utf8_lossy(&output.stderr).into_owned());
+    }
+    Ok(())
+}
+
 /// Run docker compose build.
 pub fn build() -> Result<()> {
     compose(&["build"])
@@ -463,8 +480,27 @@ pub fn build_no_cache() -> Result<()> {
 }
 
 /// Run docker compose up -d.
+/// If the first attempt fails due to stale container/image references,
+/// force-remove the container and retry once.
 pub fn up() -> Result<()> {
-    compose(&["up", "-d"])
+    match compose_captured(&["up", "-d"]) {
+        Ok(()) => Ok(()),
+        Err(stderr) => {
+            let is_stale = stderr.contains("No such container")
+                || stderr.contains("No such image")
+                || stderr.contains("not found");
+            if !is_stale {
+                bail!("docker compose up -d failed\n{}", stderr);
+            }
+            let project = compose_project_name();
+            eprintln!(
+                "Stale container state detected — removing '{}' and retrying...",
+                project
+            );
+            let _ = Command::new("docker").args(["rm", "-f", &project]).output();
+            compose(&["up", "-d"])
+        }
+    }
 }
 
 /// Run docker compose down.
@@ -927,21 +963,33 @@ pub fn is_agent_running(config: &Config, name: &str) -> bool {
 /// 4. SIGKILL the group if still alive
 pub fn kill_agent(config: &Config, name: &str) -> Result<()> {
     let container = &config.project.container_name;
+    // Kill all matching PIDs and their children, not just head -1.
+    // Use pkill for breadth, then verify with pgrep and SIGKILL stragglers.
     let script = format!(
-        r#"PID=$(pgrep -f "room-ralph.*{name}" | head -1); \
-           if [ -n "$PID" ]; then \
-             kill -- -$PID 2>/dev/null || kill $PID 2>/dev/null; \
+        r#"PIDS=$(pgrep -f "room-ralph.*{name}"); \
+           if [ -n "$PIDS" ]; then \
+             for PID in $PIDS; do \
+               kill -- -$PID 2>/dev/null; \
+               kill $PID 2>/dev/null; \
+             done; \
              sleep 2; \
-             if kill -0 $PID 2>/dev/null; then \
-               kill -9 -- -$PID 2>/dev/null || kill -9 $PID 2>/dev/null; \
-             fi; \
+             PIDS=$(pgrep -f "room-ralph.*{name}"); \
+             for PID in $PIDS; do \
+               kill -9 -- -$PID 2>/dev/null; \
+               kill -9 $PID 2>/dev/null; \
+             done; \
            fi"#
     );
-    let _ = Command::new("docker")
+    let status = Command::new("docker")
         .args(["exec", "-u", "agent"])
         .arg(container)
         .args(["bash", "-c", &script])
-        .status();
+        .status()
+        .context("failed to exec kill script in container")?;
+
+    if !status.success() {
+        eprintln!("  warning: kill script exited with {status}");
+    }
     Ok(())
 }
 
