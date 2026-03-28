@@ -576,7 +576,9 @@ fn inject_instructions_inner(config: &Config, agents: &[&crate::config::AgentDef
         let instructions = generate_role_instructions(&agent.name, &agent.role, room);
         let personality = generate_personality_file(&agent.name, &agent.role);
 
-        // Write CLAUDE.md and personality file
+        let mut changed = false;
+
+        // Write CLAUDE.md and personality file (only if content differs)
         for (path, content) in [
             (format!("{project_dir}/CLAUDE.md"), &instructions),
             (
@@ -584,6 +586,22 @@ fn inject_instructions_inner(config: &Config, agents: &[&crate::config::AgentDef
                 &personality,
             ),
         ] {
+            // Read existing content from container
+            let existing = Command::new("docker")
+                .args(["exec", "-u", "agent"])
+                .arg(container)
+                .args(["cat", &path])
+                .output()
+                .ok()
+                .filter(|o| o.status.success())
+                .map(|o| String::from_utf8_lossy(&o.stdout).into_owned());
+
+            if existing.as_deref() == Some(content.as_str()) {
+                continue;
+            }
+
+            changed = true;
+
             // Ensure parent dir exists
             if let Some(parent) = std::path::Path::new(&path).parent() {
                 let _ = Command::new("docker")
@@ -609,7 +627,9 @@ fn inject_instructions_inner(config: &Config, agents: &[&crate::config::AgentDef
             child.wait()?;
         }
 
-        eprintln!("  [{}] {} instructions written", agent.role, agent.name);
+        if changed {
+            eprintln!("  [{}] {} instructions written", agent.role, agent.name);
+        }
     }
 
     Ok(())
