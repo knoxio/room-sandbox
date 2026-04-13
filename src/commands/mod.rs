@@ -8,3 +8,4 @@ pub mod logs;
 pub mod shell;
 pub mod tui;
 pub mod up;
+pub mod upgrade;

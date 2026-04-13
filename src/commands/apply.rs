@@ -10,12 +10,12 @@ pub fn run() -> Result<()> {
     let drift = state::check_state()?;
 
     if drift.is_empty() {
-        eprintln!("Everything is up to date — nothing to apply.");
+        // Ensure container is running even if config hasn't changed
+        docker::ensure_running(&config)?;
         // Still ensure symlinks and personality files exist (idempotent)
-        if docker::is_running(&config) {
-            docker::ensure_workspace_symlinks(&config)?;
-            docker::inject_agent_instructions(&config)?;
-        }
+        docker::ensure_workspace_symlinks(&config)?;
+        docker::inject_agent_instructions(&config)?;
+        eprintln!("Everything is up to date.");
         return Ok(());
     }
 

@@ -5,6 +5,23 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.5.0] - 2026-03-21
+
+### Changed
+- Updated all agent prompts to room v3.6.0 taskboard API
+- `/taskboard review` → `/taskboard request_review`
+- Reviewer workflow: `qa-queue` → `review_claim` → `approve`/`reject`
+- Manager workflow: added `history` and `mine` for tracking
+- Full lifecycle documented: Open → Claimed → Planned → InProgress → AwaitingReview → ReviewClaimed → Finished
+- Strengthened QA guidelines: reviewers are the last line of defense, must fix all issues before approval, never label as "non-blocking" or defer to future PR
+- Added documentation accuracy requirements: coders must verify docs/README accuracy before opening PRs, reviewers must check for documentation drift
+- `apply` auto-starts container when down (no drift needed)
+- `agent remove` directly deletes workspace
+
+### Fixed
+- Claude Code installs as native binary (no longer npm)
+- Node.js only installed when needed (node language or playwright utility)
+
 ## [1.4.0] - 2026-03-20
 
 ### Added
