@@ -121,7 +121,7 @@ Each role gets a custom personality file and project-scoped CLAUDE.md with role-
 | Role | Behavior |
 |------|----------|
 | **coder** | Claims tasks, submits plans, implements on feature branches, uses `/taskboard request_review` when done |
-| **reviewer** | Uses `/taskboard qa-queue` to find work, `/taskboard review_claim` to take reviews, approves or rejects |
+| **reviewer** | Uses `/taskboard qa-queue` to find work, `/taskboard review_claim` to take reviews, approves or rejects. Acts as last line of defense; never defers issues. |
 | **manager** | Breaks goals into granular tasks via `/taskboard post`, approves plans, tracks progress with `/taskboard history` |
 
 ## Directory Layout
