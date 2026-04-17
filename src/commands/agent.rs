@@ -199,6 +199,19 @@ pub fn restart(names: &[String], all: bool, tail: bool, ralph_args: &[String]) -
         if docker::is_agent_running(&config, name) {
             eprintln!("Stopping {name}...");
             docker::kill_agent(&config, name)?;
+
+            // Poll until the process is actually gone (up to 15s)
+            let mut alive = true;
+            for _ in 0..30 {
+                if !docker::is_agent_running(&config, name) {
+                    alive = false;
+                    break;
+                }
+                std::thread::sleep(std::time::Duration::from_millis(500));
+            }
+            if alive {
+                bail!("agent '{name}' still running after kill — check manually");
+            }
         }
     }
 

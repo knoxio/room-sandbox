@@ -452,6 +452,23 @@ fn compose(args: &[&str]) -> Result<()> {
     Ok(())
 }
 
+/// Run docker compose with captured output (no terminal streaming).
+/// Returns the stderr on failure for error inspection.
+fn compose_captured(args: &[&str]) -> std::result::Result<(), String> {
+    let dir = config::sandbox_dir();
+    let project = compose_project_name();
+    let output = Command::new("docker")
+        .args(["compose", "-p", &project, "-f"])
+        .arg(dir.join("docker-compose.yml"))
+        .args(args)
+        .output()
+        .map_err(|e| e.to_string())?;
+    if !output.status.success() {
+        return Err(String::from_utf8_lossy(&output.stderr).into_owned());
+    }
+    Ok(())
+}
+
 /// Run docker compose build.
 pub fn build() -> Result<()> {
     compose(&["build"])
@@ -463,8 +480,27 @@ pub fn build_no_cache() -> Result<()> {
 }
 
 /// Run docker compose up -d.
+/// If the first attempt fails due to stale container/image references,
+/// force-remove the container and retry once.
 pub fn up() -> Result<()> {
-    compose(&["up", "-d"])
+    match compose_captured(&["up", "-d"]) {
+        Ok(()) => Ok(()),
+        Err(stderr) => {
+            let is_stale = stderr.contains("No such container")
+                || stderr.contains("No such image")
+                || stderr.contains("not found");
+            if !is_stale {
+                bail!("docker compose up -d failed\n{}", stderr);
+            }
+            let project = compose_project_name();
+            eprintln!(
+                "Stale container state detected — removing '{}' and retrying...",
+                project
+            );
+            let _ = Command::new("docker").args(["rm", "-f", &project]).output();
+            compose(&["up", "-d"])
+        }
+    }
 }
 
 /// Run docker compose down.
@@ -540,7 +576,9 @@ fn inject_instructions_inner(config: &Config, agents: &[&crate::config::AgentDef
         let instructions = generate_role_instructions(&agent.name, &agent.role, room);
         let personality = generate_personality_file(&agent.name, &agent.role);
 
-        // Write CLAUDE.md and personality file
+        let mut changed = false;
+
+        // Write CLAUDE.md and personality file (only if content differs)
         for (path, content) in [
             (format!("{project_dir}/CLAUDE.md"), &instructions),
             (
@@ -548,6 +586,22 @@ fn inject_instructions_inner(config: &Config, agents: &[&crate::config::AgentDef
                 &personality,
             ),
         ] {
+            // Read existing content from container
+            let existing = Command::new("docker")
+                .args(["exec", "-u", "agent"])
+                .arg(container)
+                .args(["cat", &path])
+                .output()
+                .ok()
+                .filter(|o| o.status.success())
+                .map(|o| String::from_utf8_lossy(&o.stdout).into_owned());
+
+            if existing.as_deref() == Some(content.as_str()) {
+                continue;
+            }
+
+            changed = true;
+
             // Ensure parent dir exists
             if let Some(parent) = std::path::Path::new(&path).parent() {
                 let _ = Command::new("docker")
@@ -573,7 +627,9 @@ fn inject_instructions_inner(config: &Config, agents: &[&crate::config::AgentDef
             child.wait()?;
         }
 
-        eprintln!("  [{}] {} instructions written", agent.role, agent.name);
+        if changed {
+            eprintln!("  [{}] {} instructions written", agent.role, agent.name);
+        }
     }
 
     Ok(())
@@ -927,21 +983,33 @@ pub fn is_agent_running(config: &Config, name: &str) -> bool {
 /// 4. SIGKILL the group if still alive
 pub fn kill_agent(config: &Config, name: &str) -> Result<()> {
     let container = &config.project.container_name;
+    // Kill all matching PIDs and their children, not just head -1.
+    // Use [r]oom-ralph bracket trick so pgrep doesn't match this bash script itself.
     let script = format!(
-        r#"PID=$(pgrep -f "room-ralph.*{name}" | head -1); \
-           if [ -n "$PID" ]; then \
-             kill -- -$PID 2>/dev/null || kill $PID 2>/dev/null; \
+        r#"PIDS=$(pgrep -f "[r]oom-ralph.*{name}"); \
+           if [ -n "$PIDS" ]; then \
+             for PID in $PIDS; do \
+               kill -- -$PID 2>/dev/null; \
+               kill $PID 2>/dev/null; \
+             done; \
              sleep 2; \
-             if kill -0 $PID 2>/dev/null; then \
-               kill -9 -- -$PID 2>/dev/null || kill -9 $PID 2>/dev/null; \
-             fi; \
+             PIDS=$(pgrep -f "[r]oom-ralph.*{name}"); \
+             for PID in $PIDS; do \
+               kill -9 -- -$PID 2>/dev/null; \
+               kill -9 $PID 2>/dev/null; \
+             done; \
            fi"#
     );
-    let _ = Command::new("docker")
+    let status = Command::new("docker")
         .args(["exec", "-u", "agent"])
         .arg(container)
         .args(["bash", "-c", &script])
-        .status();
+        .status()
+        .context("failed to exec kill script in container")?;
+
+    if !status.success() {
+        eprintln!("  warning: kill script exited with {status}");
+    }
     Ok(())
 }
 
